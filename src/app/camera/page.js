@@ -15,7 +15,7 @@ function CameraContent() {
   const [uploading, setUploading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('READY TO SHOOT');
 
-  // Trigger Native iOS Camera (Unlocks Ultra-Wide 0.5x, Flash, & Pure Still Capture)
+  // Trigger Native iOS Rear Camera
   const openNativeCamera = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
@@ -31,11 +31,10 @@ function CameraContent() {
     setStatusMessage('COMPRESSING & SAVING...');
 
     try {
-      // 1. Create bitmap to resize and convert to crisp WebP (< 200 KB)
+      // Create bitmap to resize and convert to high-efficiency WebP (< 200 KB)
       const imageBitmap = await createImageBitmap(file);
       const canvas = document.createElement('canvas');
-      
-      // Target resolution for fast auction photos
+
       const MAX_WIDTH = 1920;
       const scale = Math.min(1, MAX_WIDTH / imageBitmap.width);
       canvas.width = imageBitmap.width * scale;
@@ -81,7 +80,7 @@ function CameraContent() {
               })
             });
 
-            setPhotoCount(prev => prev + 1);
+            setPhotoCount((prev) => prev + 1);
             setStatusMessage(`SAVED (${photoCount + 1})`);
           } else {
             setStatusMessage('Cloud Upload Error');
@@ -96,12 +95,15 @@ function CameraContent() {
       console.error('Capture processing error:', err);
       setStatusMessage('Save Failed');
       setUploading(false);
+    } finally {
+      // Clear value so user can take consecutive shots with same input element
+      e.target.value = '';
     }
   };
 
   return (
     <div className="min-h-screen bg-black text-white p-5 flex flex-col justify-between max-w-md mx-auto select-none">
-      {/* Hidden Native File Input with Camera Capture Constraint */}
+      {/* Native iOS Rear Camera Direct Trigger Input */}
       <input
         type="file"
         ref={fileInputRef}
@@ -171,7 +173,7 @@ function CameraContent() {
           <span className="text-2xl">📷</span> TAKE PHOTO ({photoCount})
         </button>
         <p className="text-[11px] text-neutral-500 font-mono">
-          Unlocks iOS 0.5x Ultra-Wide lens & Hardware Flash
+          Opens rear camera view with 0.5x Ultra-Wide & Flash support
         </p>
       </div>
 
@@ -186,7 +188,13 @@ function CameraContent() {
 
 export default function CameraPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-black text-white flex items-center justify-center font-mono text-sm">Loading camera module...</div>}>
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-black text-white flex items-center justify-center font-mono text-sm">
+          Loading camera module...
+        </div>
+      }
+    >
       <CameraContent />
     </Suspense>
   );
