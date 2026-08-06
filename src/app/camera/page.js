@@ -18,7 +18,7 @@ function CameraContent() {
   const [uploading, setUploading] = useState(false);
   const [statusMessage, setStatusMessage] = useState('READY TO SHOOT');
 
-  // Initialize live rear camera in browser
+  // Initialize live rear camera inside bounded container
   useEffect(() => {
     let activeStream = null;
 
@@ -27,8 +27,8 @@ function CameraContent() {
         const mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
           },
           audio: false
         });
@@ -55,7 +55,7 @@ function CameraContent() {
     };
   }, []);
 
-  // Toggle Flashlight/Torch (if supported by device browser)
+  // Toggle Flashlight/Torch
   const toggleTorch = async () => {
     if (!stream) return;
     const track = stream.getVideoTracks()[0];
@@ -71,12 +71,12 @@ function CameraContent() {
         console.error('Torch error:', e);
       }
     } else {
-      setStatusMessage('Torch not supported in web view');
+      setStatusMessage('Torch not supported');
       setTimeout(() => setStatusMessage('READY TO SHOOT'), 1800);
     }
   };
 
-  // Play shutter sound & vibration
+  // Play shutter feedback
   const playFeedback = () => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       navigator.vibrate(50);
@@ -93,20 +93,20 @@ function CameraContent() {
       osc.start();
       osc.stop(ctx.currentTime + 0.05);
     } catch (e) {
-      // Audio context fallback
+      // Audio fallback
     }
   };
 
-  // Capture single still frame from live video feed
+  // Capture single frame from live stream
   const captureStillFrame = async () => {
     if (!videoRef.current || uploading) return;
 
     const video = videoRef.current;
-    if (video.readyState < 2) return; // Ensure video metadata is ready
+    if (video.readyState < 2) return;
 
     playFeedback();
     setUploading(true);
-    setStatusMessage('COMPRESSING & SAVING...');
+    setStatusMessage('SAVING...');
 
     const canvas = canvasRef.current || document.createElement('canvas');
     canvas.width = video.videoWidth || 1280;
@@ -115,7 +115,6 @@ function CameraContent() {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Convert canvas frame to compressed WebP image
     canvas.toBlob(
       async (blob) => {
         if (!blob) {
@@ -124,7 +123,6 @@ function CameraContent() {
           return;
         }
 
-        // Set immediate local thumbnail
         const localUrl = URL.createObjectURL(blob);
         setLastPhotoUrl(localUrl);
 
@@ -155,7 +153,7 @@ function CameraContent() {
             setPhotoCount((prev) => prev + 1);
             setStatusMessage(`SAVED (${photoCount + 1})`);
           } else {
-            setStatusMessage('Cloud Upload Issue');
+            setStatusMessage('Cloud Error');
           }
         } catch (err) {
           console.error('Upload error:', err);
@@ -171,41 +169,41 @@ function CameraContent() {
   };
 
   return (
-    <div className="relative w-screen h-screen bg-black overflow-hidden select-none flex flex-col justify-between">
+    <div className="fixed inset-0 w-full h-[100dvh] bg-black overflow-hidden select-none flex flex-col justify-between pt-safe pb-safe">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Top Overlay HUD */}
-      <div className="relative z-20 pt-8 pb-3 px-5 bg-gradient-to-b from-black/90 via-black/40 to-transparent flex justify-between items-center">
+      {/* Top Bar Header */}
+      <div className="relative z-20 pt-4 pb-2 px-4 flex justify-between items-center bg-black/80 backdrop-blur-md">
         <button
           onClick={() => router.push('/')}
-          className="w-10 h-10 rounded-full bg-neutral-900/80 backdrop-blur-md border border-neutral-700/60 flex items-center justify-center text-white text-sm font-bold active:scale-95 transition-transform"
+          className="w-9 h-9 rounded-full bg-neutral-900 border border-neutral-700/60 flex items-center justify-center text-white text-xs font-bold active:scale-95 transition-transform"
         >
           ✕
         </button>
 
         {/* Lot Badge */}
-        <div className="px-4 py-1.5 bg-neutral-900/90 backdrop-blur-md border border-yellow-500/30 rounded-full flex items-center gap-2">
+        <div className="px-3 py-1 bg-neutral-900 border border-yellow-500/40 rounded-full flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
           <span className="font-mono text-xs font-extrabold text-yellow-400 tracking-wider">
             {lotNumber}
           </span>
         </div>
 
-        {/* Torch Toggle */}
+        {/* Flashlight Button */}
         <button
           onClick={toggleTorch}
-          className={`w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center text-sm transition-all ${
+          className={`w-9 h-9 rounded-full flex items-center justify-center text-xs transition-all ${
             torchOn
-              ? 'bg-yellow-400 text-black shadow-lg shadow-yellow-400/40'
-              : 'bg-neutral-900/80 text-white border border-neutral-700/60'
+              ? 'bg-yellow-400 text-black shadow-md shadow-yellow-400/40'
+              : 'bg-neutral-900 text-white border border-neutral-700/60'
           }`}
         >
           ⚡
         </button>
       </div>
 
-      {/* Main In-Browser Viewfinder */}
-      <div className="relative flex-1 mx-3 my-1 rounded-3xl overflow-hidden border border-neutral-800 bg-neutral-950 flex items-center justify-center">
+      {/* Camera Viewfinder (Constrained viewport) */}
+      <div className="relative flex-1 m-2 rounded-2xl overflow-hidden border border-neutral-800 bg-neutral-950 flex items-center justify-center min-h-0">
         <video
           ref={videoRef}
           autoPlay
@@ -214,45 +212,45 @@ function CameraContent() {
           className="w-full h-full object-cover pointer-events-none"
         />
 
-        {/* Status Overlay */}
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-none">
-          <span className="px-3.5 py-1 bg-black/70 backdrop-blur-md rounded-full text-[11px] font-mono font-bold tracking-widest text-neutral-200 border border-white/15 uppercase">
+        {/* Live Status Tag */}
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 pointer-events-none">
+          <span className="px-3 py-0.5 bg-black/70 backdrop-blur-md rounded-full text-[10px] font-mono font-bold tracking-widest text-neutral-200 border border-white/15 uppercase">
             {statusMessage}
           </span>
         </div>
       </div>
 
-      {/* Bottom Shutter Controls */}
-      <div className="relative z-20 pb-8 pt-4 px-6 bg-black flex items-center justify-between">
-        {/* Gallery / Recent Preview */}
+      {/* Bottom Shutter Control Bar */}
+      <div className="relative z-20 pb-5 pt-2 px-6 bg-black flex items-center justify-between">
+        {/* Gallery Preview Box */}
         <button
           onClick={() => router.push('/gallery')}
-          className="w-14 h-14 rounded-2xl bg-neutral-900 border border-neutral-700/80 overflow-hidden flex items-center justify-center active:scale-95 transition-transform"
+          className="w-12 h-12 rounded-xl bg-neutral-900 border border-neutral-700/80 overflow-hidden flex items-center justify-center active:scale-95 transition-transform"
         >
           {lastPhotoUrl ? (
             <img src={lastPhotoUrl} alt="Recent" className="w-full h-full object-cover" />
           ) : (
-            <span className="text-xl">🖼️</span>
+            <span className="text-lg">🖼️</span>
           )}
         </button>
 
-        {/* Physical Shutter Button */}
+        {/* Main Shutter Button */}
         <button
           onClick={captureStillFrame}
           disabled={uploading}
-          className="relative w-20 h-20 rounded-full border-4 border-white flex items-center justify-center active:scale-90 transition-transform shadow-2xl"
+          className="relative w-16 h-16 rounded-full border-4 border-white flex items-center justify-center active:scale-90 transition-transform shadow-xl"
         >
           <div
-            className={`w-16 h-16 rounded-full transition-all ${
+            className={`w-12 h-12 rounded-full transition-all ${
               uploading ? 'bg-yellow-400 scale-75' : 'bg-white'
             }`}
           />
         </button>
 
-        {/* Photo Count Display */}
-        <div className="w-14 h-14 rounded-2xl bg-neutral-900 border border-neutral-800 flex flex-col items-center justify-center text-center">
-          <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-tight">COUNT</span>
-          <span className="text-sm font-mono font-extrabold text-blue-400">{photoCount}</span>
+        {/* Photo Counter */}
+        <div className="w-12 h-12 rounded-xl bg-neutral-900 border border-neutral-800 flex flex-col items-center justify-center text-center">
+          <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-tight">COUNT</span>
+          <span className="text-xs font-mono font-extrabold text-blue-400">{photoCount}</span>
         </div>
       </div>
     </div>
