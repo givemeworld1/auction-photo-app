@@ -1,0 +1,20 @@
+{
+  "name": "Auction Photo App",
+  "short_name": "AuctionPhotos",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "https://res.cloudinary.com/db744xrg/image/upload/w_192,h_192,c_fill/v1/sample",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://res.cloudinary.com/db744xrg/image/upload/w_512,h_512,c_fill/v1/sample",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
