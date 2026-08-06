@@ -169,48 +169,54 @@ function CameraContent() {
   };
 
   return (
-    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen bg-black overflow-hidden select-none grid grid-rows-[auto_1fr_auto]">
+    <div 
+      className="fixed inset-0 w-full bg-black overflow-hidden select-none"
+      style={{ height: '100dvh', maxHeight: '-webkit-fill-available' }}
+    >
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Row 1: Top Header Bar */}
-      <div className="z-20 pt-10 pb-2 px-4 flex justify-between items-center bg-black">
-        <button
-          onClick={() => router.push('/')}
-          className="w-9 h-9 rounded-full bg-neutral-900 border border-neutral-700/60 flex items-center justify-center text-white text-xs font-bold active:scale-95 transition-transform"
-        >
-          ✕
-        </button>
+      {/* Main Container constrained strictly by dynamic viewport */}
+      <div className="w-full h-full flex flex-col justify-between overflow-hidden">
+        
+        {/* Top Header Bar */}
+        <div className="shrink-0 z-30 pt-10 pb-2 px-4 flex justify-between items-center bg-black/90 backdrop-blur-md">
+          <button
+            onClick={() => router.push('/')}
+            className="w-9 h-9 rounded-full bg-neutral-900 border border-neutral-700/60 flex items-center justify-center text-white text-xs font-bold active:scale-95 transition-transform"
+          >
+            ✕
+          </button>
 
-        {/* Lot Badge */}
-        <div className="px-3 py-1 bg-neutral-900 border border-yellow-500/40 rounded-full flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
-          <span className="font-mono text-xs font-extrabold text-yellow-400 tracking-wider">
-            {lotNumber}
-          </span>
+          {/* Lot Badge */}
+          <div className="px-3 py-1 bg-neutral-900 border border-yellow-500/40 rounded-full flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
+            <span className="font-mono text-xs font-extrabold text-yellow-400 tracking-wider">
+              {lotNumber}
+            </span>
+          </div>
+
+          {/* Flashlight Button */}
+          <button
+            onClick={toggleTorch}
+            className={`w-9 h-9 rounded-full flex items-center justify-center text-xs transition-all ${
+              torchOn
+                ? 'bg-yellow-400 text-black shadow-md shadow-yellow-400/40'
+                : 'bg-neutral-900 text-white border border-neutral-700/60'
+            }`}
+          >
+            ⚡
+          </button>
         </div>
 
-        {/* Flashlight Button */}
-        <button
-          onClick={toggleTorch}
-          className={`w-9 h-9 rounded-full flex items-center justify-center text-xs transition-all ${
-            torchOn
-              ? 'bg-yellow-400 text-black shadow-md shadow-yellow-400/40'
-              : 'bg-neutral-900 text-white border border-neutral-700/60'
-          }`}
-        >
-          ⚡
-        </button>
-      </div>
-
-      {/* Row 2: Camera Viewfinder (Absolute Frame Bounds) */}
-      <div className="relative w-full h-full overflow-hidden p-2">
-        <div className="relative w-full h-full rounded-2xl overflow-hidden border border-neutral-800 bg-neutral-950">
+        {/* Camera Viewfinder Area (Clamped explicitly) */}
+        <div className="relative flex-1 my-2 mx-3 min-h-0 min-w-0 rounded-2xl overflow-hidden border border-neutral-800 bg-neutral-950">
           <video
             ref={videoRef}
             autoPlay
             playsInline
             muted
-            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+            className="pointer-events-none"
           />
 
           {/* Live Status Tag */}
@@ -220,40 +226,41 @@ function CameraContent() {
             </span>
           </div>
         </div>
-      </div>
 
-      {/* Row 3: Bottom Shutter Control Bar */}
-      <div className="z-20 pb-8 pt-2 px-6 bg-black flex items-center justify-between">
-        {/* Gallery Preview Box */}
-        <button
-          onClick={() => router.push('/gallery')}
-          className="w-12 h-12 rounded-xl bg-neutral-900 border border-neutral-700/80 overflow-hidden flex items-center justify-center active:scale-95 transition-transform"
-        >
-          {lastPhotoUrl ? (
-            <img src={lastPhotoUrl} alt="Recent" className="w-full h-full object-cover" />
-          ) : (
-            <span className="text-lg">🖼️</span>
-          )}
-        </button>
+        {/* Bottom Shutter Control Bar */}
+        <div className="shrink-0 z-30 pb-8 pt-2 px-6 bg-black flex items-center justify-between">
+          {/* Gallery Preview Box */}
+          <button
+            onClick={() => router.push('/gallery')}
+            className="w-12 h-12 rounded-xl bg-neutral-900 border border-neutral-700/80 overflow-hidden flex items-center justify-center active:scale-95 transition-transform"
+          >
+            {lastPhotoUrl ? (
+              <img src={lastPhotoUrl} alt="Recent" className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-lg">🖼️</span>
+            )}
+          </button>
 
-        {/* Main Shutter Button */}
-        <button
-          onClick={captureStillFrame}
-          disabled={uploading}
-          className="relative w-16 h-16 rounded-full border-4 border-white flex items-center justify-center active:scale-90 transition-transform shadow-xl"
-        >
-          <div
-            className={`w-12 h-12 rounded-full transition-all ${
-              uploading ? 'bg-yellow-400 scale-75' : 'bg-white'
-            }`}
-          />
-        </button>
+          {/* Main Shutter Button */}
+          <button
+            onClick={captureStillFrame}
+            disabled={uploading}
+            className="relative w-16 h-16 rounded-full border-4 border-white flex items-center justify-center active:scale-90 transition-transform shadow-xl"
+          >
+            <div
+              className={`w-12 h-12 rounded-full transition-all ${
+                uploading ? 'bg-yellow-400 scale-75' : 'bg-white'
+              }`}
+            />
+          </button>
 
-        {/* Photo Counter */}
-        <div className="w-12 h-12 rounded-xl bg-neutral-900 border border-neutral-800 flex flex-col items-center justify-center text-center">
-          <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-tight">COUNT</span>
-          <span className="text-xs font-mono font-extrabold text-blue-400">{photoCount}</span>
+          {/* Photo Counter */}
+          <div className="w-12 h-12 rounded-xl bg-neutral-900 border border-neutral-800 flex flex-col items-center justify-center text-center">
+            <span className="text-[9px] font-bold text-neutral-500 uppercase tracking-tight">COUNT</span>
+            <span className="text-xs font-mono font-extrabold text-blue-400">{photoCount}</span>
+          </div>
         </div>
+
       </div>
     </div>
   );
