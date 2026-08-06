@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 
 function CameraContent() {
   const searchParams = useSearchParams();
-  const router = Router();
+  const router = useRouter();
   const lotNumber = searchParams.get('lot') || 'UNNAMED-LOT';
 
   const videoRef = useRef(null);
@@ -20,35 +20,35 @@ function CameraContent() {
 
   // Initialize camera stream
   useEffect(() => {
+    let activeStream = null;
+
     async function startCamera() {
       try {
         const mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: { exact: 'environment' },
+            facingMode: { ideal: 'environment' },
             width: { ideal: 1920 },
             height: { ideal: 1080 }
           },
           audio: false
-        }).catch(() => {
-          // Fallback if environment camera constraint fails
-          return navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         });
 
+        activeStream = mediaStream;
         setStream(mediaStream);
         if (videoRef.current) {
           videoRef.current.srcObject = mediaStream;
         }
       } catch (err) {
         console.error('Camera access error:', err);
-        setStatusMessage('Camera access denied or unavailable');
+        setStatusMessage('Camera permission required');
       }
     }
 
     startCamera();
 
     return () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+      if (activeStream) {
+        activeStream.getTracks().forEach(track => track.stop());
       }
     };
   }, []);
@@ -69,7 +69,7 @@ function CameraContent() {
         console.error('Torch error:', e);
       }
     } else {
-      setStatusMessage('Hardware Torch not supported on this lens');
+      setStatusMessage('Hardware Torch not supported');
       setTimeout(() => setStatusMessage('Tap screen to capture'), 2000);
     }
   };
@@ -95,7 +95,7 @@ function CameraContent() {
   // Trigger Shutter Sound & Haptic Vibration
   const playShutterFeedback = () => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(50); // 50ms haptic click
+      navigator.vibrate(50);
     }
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -109,7 +109,7 @@ function CameraContent() {
       osc.start();
       osc.stop(ctx.currentTime + 0.05);
     } catch (e) {
-      // Audio context fallback
+      // Audio fallback
     }
   };
 
@@ -129,7 +129,6 @@ function CameraContent() {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Client-side WebP compression (< 200 KB)
     canvas.toBlob(
       async (blob) => {
         if (!blob) {
@@ -139,10 +138,9 @@ function CameraContent() {
         }
 
         try {
-          // Upload directly to Cloudinary
           const formData = new FormData();
           formData.append('file', blob);
-          formData.append('upload_preset', 'ml_default'); // Uses standard preset
+          formData.append('upload_preset', 'ml_default');
 
           const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'db744xrg';
           const cloudRes = await fetch(
@@ -153,7 +151,6 @@ function CameraContent() {
           const cloudData = await cloudRes.json();
 
           if (cloudData.secure_url) {
-            // Save to database
             await fetch('/api/photos/upload', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -171,23 +168,22 @@ function CameraContent() {
           }
         } catch (err) {
           console.error('Upload error:', err);
-          setStatusMessage('Offline - saved locally');
+          setStatusMessage('Upload error');
         } finally {
           setUploading(false);
           setTimeout(() => setStatusMessage('Tap screen to capture'), 1500);
         }
       },
       'image/webp',
-      0.75 // 75% quality yields crisp WebP images under 200 KB
+      0.75
     );
   };
 
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden select-none">
-      {/* Hidden processing canvas */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Main Full-Screen Video Preview (Tap anywhere to shoot) */}
+      {/* Main Video View */}
       <div 
         onClick={handleTapCapture}
         className="relative w-full h-full cursor-pointer active:opacity-95 transition-opacity"
@@ -228,7 +224,6 @@ function CameraContent() {
 
       {/* Bottom Floating Control Bar */}
       <div className="absolute bottom-6 left-4 right-4 flex flex-col gap-3 pointer-events-auto">
-        {/* Zoom Selector Buttons & Live Counter */}
         <div className="flex justify-between items-center bg-black/75 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/10">
           <div className="text-xs font-bold text-blue-400 font-mono">
             📸 {photoCount} PHOTOS
@@ -254,17 +249,16 @@ function CameraContent() {
           </div>
         </div>
 
-        {/* Exit & Gallery Buttons */}
         <div className="flex gap-3">
           <button
-            onClick={() => window.location.href = '/'}
+            onClick={() => router.push('/')}
             className="flex-1 py-3.5 bg-neutral-900/90 active:bg-neutral-800 text-neutral-300 font-bold rounded-xl text-xs backdrop-blur-md border border-white/10 text-center"
           >
             ✕ EXIT CAMERA
           </button>
 
           <button
-            onClick={() => window.location.href = '/gallery'}
+            onClick={() => router.push('/gallery')}
             className="flex-1 py-3.5 bg-blue-600 active:bg-blue-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-blue-900/50 text-center"
           >
             🖼️ VIEW GALLERY
@@ -277,7 +271,7 @@ function CameraContent() {
 
 export default function CameraPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-black text-white flex items-center justify-center">Loading camera...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-black text-white flex items-center justify-center font-mono text-sm">Loading camera...</div>}>
       <CameraContent />
     </Suspense>
   );
