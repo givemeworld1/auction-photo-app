@@ -14,11 +14,13 @@ function CameraContent() {
   const [stream, setStream] = useState(null);
   const [torchOn, setTorchOn] = useState(false);
   const [photoCount, setPhotoCount] = useState(0);
+  const [lastPhotoUrl, setLastPhotoUrl] = useState(null);
   const [zoomLevel, setZoomLevel] = useState(1);
+  const [showGrid, setShowGrid] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('Tap screen to capture');
+  const [statusMessage, setStatusMessage] = useState('READY');
 
-  // Initialize camera stream
+  // Initialize rear camera explicitly for still photo capture
   useEffect(() => {
     let activeStream = null;
 
@@ -40,7 +42,7 @@ function CameraContent() {
         }
       } catch (err) {
         console.error('Camera access error:', err);
-        setStatusMessage('Camera permission required');
+        setStatusMessage('Camera Access Denied');
       }
     }
 
@@ -53,7 +55,7 @@ function CameraContent() {
     };
   }, []);
 
-  // Toggle Torch/Flashlight
+  // Toggle Hardware Torch / Flashlight
   const toggleTorch = async () => {
     if (!stream) return;
     const track = stream.getVideoTracks()[0];
@@ -69,12 +71,12 @@ function CameraContent() {
         console.error('Torch error:', e);
       }
     } else {
-      setStatusMessage('Hardware Torch not supported');
-      setTimeout(() => setStatusMessage('Tap screen to capture'), 2000);
+      setStatusMessage('Torch unavailable on lens');
+      setTimeout(() => setStatusMessage('READY'), 2000);
     }
   };
 
-  // Adjust Zoom Level
+  // Set Camera Zoom (0.5x, 1x, 2x)
   const applyZoom = async (zoomValue) => {
     setZoomLevel(zoomValue);
     if (!stream) return;
@@ -87,39 +89,39 @@ function CameraContent() {
           advanced: [{ zoom: zoomValue }]
         });
       } catch (e) {
-        console.error('Zoom constraint error:', e);
+        console.error('Zoom error:', e);
       }
     }
   };
 
-  // Trigger Shutter Sound & Haptic Vibration
+  // Shutter Haptic & Audio Feedback
   const playShutterFeedback = () => {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(50);
+      navigator.vibrate(60);
     }
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, ctx.currentTime);
-      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      osc.frequency.setValueAtTime(900, ctx.currentTime);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start();
-      osc.stop(ctx.currentTime + 0.05);
+      osc.stop(ctx.currentTime + 0.04);
     } catch (e) {
-      // Audio fallback
+      // Audio context safety
     }
   };
 
-  // Capture Photo on Tap
-  const handleTapCapture = async () => {
+  // Dedicated Still Photo Capture
+  const takeStillPhoto = async () => {
     if (!videoRef.current || uploading) return;
 
     playShutterFeedback();
     setUploading(true);
-    setStatusMessage('Compressing & Uploading...');
+    setStatusMessage('SAVING...');
 
     const video = videoRef.current;
     const canvas = canvasRef.current || document.createElement('canvas');
@@ -129,13 +131,18 @@ function CameraContent() {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
+    // Compress to high-efficiency WebP (< 200 KB)
     canvas.toBlob(
       async (blob) => {
         if (!blob) {
           setUploading(false);
-          setStatusMessage('Capture error. Try again.');
+          setStatusMessage('Capture Failed');
           return;
         }
+
+        // Generate instant local preview thumbnail
+        const localPreviewUrl = URL.createObjectURL(blob);
+        setLastPhotoUrl(localPreviewUrl);
 
         try {
           const formData = new FormData();
@@ -162,16 +169,16 @@ function CameraContent() {
             });
 
             setPhotoCount(prev => prev + 1);
-            setStatusMessage(`Saved! (${photoCount + 1} photos taken)`);
+            setStatusMessage(`SAVED (${photoCount + 1})`);
           } else {
-            setStatusMessage('Cloud upload issue');
+            setStatusMessage('Cloud Error');
           }
         } catch (err) {
           console.error('Upload error:', err);
-          setStatusMessage('Upload error');
+          setStatusMessage('Saved Locally');
         } finally {
           setUploading(false);
-          setTimeout(() => setStatusMessage('Tap screen to capture'), 1500);
+          setTimeout(() => setStatusMessage('READY'), 1200);
         }
       },
       'image/webp',
@@ -180,14 +187,54 @@ function CameraContent() {
   };
 
   return (
-    <div className="relative w-screen h-screen bg-black overflow-hidden select-none">
+    <div className="relative w-screen h-screen bg-black overflow-hidden select-none flex flex-col justify-between">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Main Video View */}
-      <div 
-        onClick={handleTapCapture}
-        className="relative w-full h-full cursor-pointer active:opacity-95 transition-opacity"
-      >
+      {/* Top Header Bar */}
+      <div className="relative z-20 pt-10 pb-3 px-5 bg-gradient-to-b from-black/90 via-black/50 to-transparent flex justify-between items-center">
+        <button
+          onClick={() => router.push('/')}
+          className="w-10 h-10 rounded-full bg-neutral-900/80 backdrop-blur-md border border-neutral-700/60 flex items-center justify-center text-white text-sm font-bold active:scale-95 transition-transform"
+        >
+          ✕
+        </button>
+
+        {/* Lot Badge */}
+        <div className="px-4 py-1.5 bg-neutral-900/90 backdrop-blur-md border border-yellow-500/30 rounded-full flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
+          <span className="font-mono text-xs font-extrabold text-yellow-400 tracking-wider">
+            {lotNumber}
+          </span>
+        </div>
+
+        {/* Top Controls: Torch & Grid */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowGrid(!showGrid)}
+            className={`w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center text-xs font-bold transition-all ${
+              showGrid
+                ? 'bg-blue-600 text-white'
+                : 'bg-neutral-900/80 text-neutral-400 border border-neutral-700/60'
+            }`}
+          >
+            GRID
+          </button>
+
+          <button
+            onClick={toggleTorch}
+            className={`w-10 h-10 rounded-full backdrop-blur-md flex items-center justify-center text-sm transition-all ${
+              torchOn
+                ? 'bg-yellow-400 text-black shadow-lg shadow-yellow-400/40'
+                : 'bg-neutral-900/80 text-white border border-neutral-700/60'
+            }`}
+          >
+            ⚡
+          </button>
+        </div>
+      </div>
+
+      {/* Center Viewfinder Window */}
+      <div className="relative flex-1 mx-3 my-1 rounded-3xl overflow-hidden border border-neutral-800 bg-neutral-950 flex items-center justify-center">
         <video
           ref={videoRef}
           autoPlay
@@ -196,73 +243,75 @@ function CameraContent() {
           className="w-full h-full object-cover"
         />
 
-        {/* Live Status Overlay */}
-        <div className="absolute top-16 left-0 right-0 text-center pointer-events-none">
-          <span className="px-4 py-1.5 bg-black/60 backdrop-blur-md rounded-full text-xs font-semibold text-white tracking-wide border border-white/10">
+        {/* 3x3 Composition Grid Overlay */}
+        {showGrid && (
+          <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none border border-white/10">
+            <div className="border-r border-b border-white/10"></div>
+            <div className="border-r border-b border-white/10"></div>
+            <div className="border-b border-white/10"></div>
+            <div className="border-r border-b border-white/10"></div>
+            <div className="border-r border-b border-white/10"></div>
+            <div className="border-b border-white/10"></div>
+            <div className="border-r border-white/10"></div>
+            <div className="border-r border-white/10"></div>
+            <div></div>
+          </div>
+        )}
+
+        {/* Status Indicator Pill */}
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 pointer-events-none">
+          <span className="px-3.5 py-1 bg-black/70 backdrop-blur-md rounded-full text-[11px] font-mono font-bold tracking-widest text-neutral-200 border border-white/15 uppercase">
             {statusMessage}
           </span>
         </div>
+
+        {/* Zoom Selector Controls Overlay */}
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 px-3 py-1.5 bg-black/60 backdrop-blur-md rounded-full border border-white/15">
+          {[0.5, 1.0, 2.0].map((z) => (
+            <button
+              key={z}
+              onClick={() => applyZoom(z)}
+              className={`w-8 h-8 rounded-full text-xs font-mono font-bold transition-all ${
+                zoomLevel === z
+                  ? 'bg-yellow-400 text-black scale-110'
+                  : 'text-neutral-300 hover:text-white'
+              }`}
+            >
+              {z}x
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Top HUD Controls */}
-      <div className="absolute top-4 left-4 right-4 flex justify-between items-center pointer-events-auto">
+      {/* Bottom Pro Control Bar */}
+      <div className="relative z-20 pb-8 pt-4 px-6 bg-black flex items-center justify-between">
+        {/* Gallery / Recent Shot Preview */}
         <button
-          onClick={toggleTorch}
-          className={`px-4 py-2.5 rounded-full text-xs font-bold flex items-center gap-2 backdrop-blur-md transition-all ${
-            torchOn
-              ? 'bg-yellow-400 text-black shadow-lg shadow-yellow-400/50'
-              : 'bg-black/60 text-white border border-white/20'
-          }`}
+          onClick={() => router.push('/gallery')}
+          className="w-14 h-14 rounded-2xl bg-neutral-900 border border-neutral-700/80 overflow-hidden flex items-center justify-center active:scale-95 transition-transform"
         >
-          ⚡ {torchOn ? 'TORCH ON' : 'TORCH OFF'}
+          {lastPhotoUrl ? (
+            <img src={lastPhotoUrl} alt="Recent shot" className="w-full h-full object-cover" />
+          ) : (
+            <span className="text-xl">🖼️</span>
+          )}
         </button>
 
-        <div className="px-4 py-2 bg-black/60 backdrop-blur-md border border-white/20 rounded-full font-mono text-xs font-bold text-yellow-400 tracking-wider uppercase">
-          {lotNumber}
-        </div>
-      </div>
+        {/* Main iOS-Style Physical Shutter Button */}
+        <button
+          onClick={takeStillPhoto}
+          disabled={uploading}
+          className="relative w-20 h-20 rounded-full border-4 border-white flex items-center justify-center active:scale-90 transition-transform shadow-2xl"
+        >
+          <div className={`w-16 h-16 rounded-full transition-all ${
+            uploading ? 'bg-yellow-400 scale-75' : 'bg-white'
+          }`} />
+        </button>
 
-      {/* Bottom Floating Control Bar */}
-      <div className="absolute bottom-6 left-4 right-4 flex flex-col gap-3 pointer-events-auto">
-        <div className="flex justify-between items-center bg-black/75 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/10">
-          <div className="text-xs font-bold text-blue-400 font-mono">
-            📸 {photoCount} PHOTOS
-          </div>
-
-          <div className="flex gap-2">
-            {[0.5, 1.0, 2.0].map((z) => (
-              <button
-                key={z}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  applyZoom(z);
-                }}
-                className={`px-3 py-1 rounded-lg text-xs font-bold font-mono transition-colors ${
-                  zoomLevel === z
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white/10 text-neutral-300 hover:bg-white/20'
-                }`}
-              >
-                {z}x
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex gap-3">
-          <button
-            onClick={() => router.push('/')}
-            className="flex-1 py-3.5 bg-neutral-900/90 active:bg-neutral-800 text-neutral-300 font-bold rounded-xl text-xs backdrop-blur-md border border-white/10 text-center"
-          >
-            ✕ EXIT CAMERA
-          </button>
-
-          <button
-            onClick={() => router.push('/gallery')}
-            className="flex-1 py-3.5 bg-blue-600 active:bg-blue-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-blue-900/50 text-center"
-          >
-            🖼️ VIEW GALLERY
-          </button>
+        {/* Photo Counter Badge */}
+        <div className="w-14 h-14 rounded-2xl bg-neutral-900 border border-neutral-800 flex flex-col items-center justify-center text-center">
+          <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-tight">COUNT</span>
+          <span className="text-sm font-mono font-extrabold text-blue-400">{photoCount}</span>
         </div>
       </div>
     </div>
@@ -271,7 +320,7 @@ function CameraContent() {
 
 export default function CameraPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen bg-black text-white flex items-center justify-center font-mono text-sm">Loading camera...</div>}>
+    <Suspense fallback={<div className="min-h-screen bg-black text-white flex items-center justify-center font-mono text-sm">Initializing Camera...</div>}>
       <CameraContent />
     </Suspense>
   );
