@@ -169,11 +169,11 @@ function CameraContent() {
   };
 
   return (
-    <div className="fixed inset-0 w-screen h-[100dvh] bg-black overflow-hidden select-none flex flex-col justify-between">
+    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-screen h-screen bg-black overflow-hidden select-none grid grid-rows-[auto_1fr_auto]">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Top Header Bar */}
-      <div className="flex-shrink-0 z-20 pt-10 pb-3 px-4 flex justify-between items-center bg-black">
+      {/* Row 1: Top Header Bar */}
+      <div className="z-20 pt-10 pb-2 px-4 flex justify-between items-center bg-black">
         <button
           onClick={() => router.push('/')}
           className="w-9 h-9 rounded-full bg-neutral-900 border border-neutral-700/60 flex items-center justify-center text-white text-xs font-bold active:scale-95 transition-transform"
@@ -202,26 +202,28 @@ function CameraContent() {
         </button>
       </div>
 
-      {/* Viewfinder Window (Strict Bounds) */}
-      <div className="relative flex-1 mx-3 my-2 rounded-2xl overflow-hidden border border-neutral-800 bg-neutral-950">
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
-        />
+      {/* Row 2: Camera Viewfinder (Absolute Frame Bounds) */}
+      <div className="relative w-full h-full overflow-hidden p-2">
+        <div className="relative w-full h-full rounded-2xl overflow-hidden border border-neutral-800 bg-neutral-950">
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+          />
 
-        {/* Live Status Tag */}
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 pointer-events-none z-10">
-          <span className="px-3 py-0.5 bg-black/70 backdrop-blur-md rounded-full text-[10px] font-mono font-bold tracking-widest text-neutral-200 border border-white/15 uppercase">
-            {statusMessage}
-          </span>
+          {/* Live Status Tag */}
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 pointer-events-none z-10">
+            <span className="px-3 py-0.5 bg-black/70 backdrop-blur-md rounded-full text-[10px] font-mono font-bold tracking-widest text-neutral-200 border border-white/15 uppercase">
+              {statusMessage}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Bottom Shutter Control Bar */}
-      <div className="flex-shrink-0 z-20 pb-8 pt-3 px-6 bg-black flex items-center justify-between">
+      {/* Row 3: Bottom Shutter Control Bar */}
+      <div className="z-20 pb-8 pt-2 px-6 bg-black flex items-center justify-between">
         {/* Gallery Preview Box */}
         <button
           onClick={() => router.push('/gallery')}
