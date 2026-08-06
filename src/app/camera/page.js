@@ -169,11 +169,11 @@ function CameraContent() {
   };
 
   return (
-    <div className="fixed inset-0 w-full h-[100dvh] bg-black overflow-hidden select-none flex flex-col justify-between pt-safe pb-safe">
+    <div className="fixed inset-0 w-screen h-[100dvh] bg-black overflow-hidden select-none flex flex-col justify-between">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Top Bar Header */}
-      <div className="relative z-20 pt-4 pb-2 px-4 flex justify-between items-center bg-black/80 backdrop-blur-md">
+      {/* Top Header Bar */}
+      <div className="flex-shrink-0 z-20 pt-10 pb-3 px-4 flex justify-between items-center bg-black">
         <button
           onClick={() => router.push('/')}
           className="w-9 h-9 rounded-full bg-neutral-900 border border-neutral-700/60 flex items-center justify-center text-white text-xs font-bold active:scale-95 transition-transform"
@@ -202,18 +202,18 @@ function CameraContent() {
         </button>
       </div>
 
-      {/* Camera Viewfinder (Constrained viewport) */}
-      <div className="relative flex-1 m-2 rounded-2xl overflow-hidden border border-neutral-800 bg-neutral-950 flex items-center justify-center min-h-0">
+      {/* Viewfinder Window (Strict Bounds) */}
+      <div className="relative flex-1 mx-3 my-2 rounded-2xl overflow-hidden border border-neutral-800 bg-neutral-950">
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          className="w-full h-full object-cover pointer-events-none"
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none"
         />
 
         {/* Live Status Tag */}
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 pointer-events-none">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 pointer-events-none z-10">
           <span className="px-3 py-0.5 bg-black/70 backdrop-blur-md rounded-full text-[10px] font-mono font-bold tracking-widest text-neutral-200 border border-white/15 uppercase">
             {statusMessage}
           </span>
@@ -221,7 +221,7 @@ function CameraContent() {
       </div>
 
       {/* Bottom Shutter Control Bar */}
-      <div className="relative z-20 pb-5 pt-2 px-6 bg-black flex items-center justify-between">
+      <div className="flex-shrink-0 z-20 pb-8 pt-3 px-6 bg-black flex items-center justify-between">
         {/* Gallery Preview Box */}
         <button
           onClick={() => router.push('/gallery')}
