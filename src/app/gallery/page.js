@@ -6,8 +6,6 @@ import Link from 'next/link';
 export default function GalleryPage() {
   const [folders, setFolders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedFolder, setSelectedFolder] = useState(null);
-  const [shareUrl, setShareUrl] = useState('');
 
   useEffect(() => {
     fetchGallery();
@@ -37,16 +35,18 @@ export default function GalleryPage() {
       const data = await res.json();
       if (data.shareToken) {
         const fullUrl = `${window.location.origin}/share/${data.shareToken}`;
-        setShareUrl(fullUrl);
-        navigator.clipboard.writeText(fullUrl);
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(fullUrl);
+        }
         alert('Share link copied to clipboard!\n\n' + fullUrl);
       }
     } catch (err) {
+      console.error('Share error:', err);
       alert('Failed to generate share link');
     }
   };
 
-  // Cloudinary helper to convert full photo URL into a tiny thumbnail (< 20 KB)
+  // Helper to convert full Cloudinary URL into small WebP thumbnail (< 20 KB)
   const getThumbnailUrl = (url) => {
     if (!url) return '';
     return url.replace('/upload/', '/upload/w_300,h_300,c_fill,q_auto,f_webp/');
@@ -119,7 +119,7 @@ export default function GalleryPage() {
               {/* Folder Actions */}
               <button
                 onClick={() => handleGenerateShareLink(folder.id)}
-                className="px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5"
+                className="px-3.5 py-2 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-white font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 active:scale-95"
               >
                 🔗 Share
               </button>
@@ -132,7 +132,7 @@ export default function GalleryPage() {
       <div className="pt-8 pb-4">
         <Link
           href="/"
-          className="block w-full py-4 bg-neutral-900 border border-neutral-800 rounded-2xl text-center text-xs font-bold text-neutral-300"
+          className="block w-full py-4 bg-neutral-900 border border-neutral-800 rounded-2xl text-center text-xs font-bold text-neutral-300 active:bg-neutral-800"
         >
           Return to Dashboard
         </Link>
