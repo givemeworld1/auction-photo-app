@@ -40,7 +40,7 @@ function createShutterAudio() {
   if (typeof window === 'undefined') return null;
 
   const sampleRate = 8000;
-  const numSamples = sampleRate * 0.08; // 80ms duration
+  const numSamples = sampleRate * 0.08;
   const buffer = new ArrayBuffer(44 + numSamples);
   const view = new DataView(buffer);
 
@@ -55,8 +55,8 @@ function createShutterAudio() {
   writeString(8, 'WAVE');
   writeString(12, 'fmt ');
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
-  view.setUint16(22, 1, true); // Mono
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate, true);
   view.setUint16(32, 1, true);
@@ -103,7 +103,7 @@ function CameraContent() {
         audioRef.current.play().catch(() => {});
       }
     } catch (e) {
-      // Ignore audio failure to keep photo saving operational
+      // Fallback silently if browser audio fails
     }
   };
 
@@ -201,25 +201,25 @@ function CameraContent() {
   };
 
   return (
-    <div className="fixed inset-0 w-screen h-screen bg-black text-white flex flex-col justify-between p-2 select-none font-sans overflow-hidden box-border">
+    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-full h-full bg-black text-white flex flex-col justify-between p-2 select-none font-sans overflow-hidden">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Screen flash feedback */}
+      {/* Visual Flash Effect */}
       {flashFeedback && <div className="fixed inset-0 bg-white z-50 pointer-events-none opacity-80" />}
 
-      {/* Top Controls Bar */}
-      <div className="h-12 px-1 flex justify-between items-center z-10 shrink-0">
+      {/* Header Bar */}
+      <div className="h-12 px-1 flex justify-between items-center z-20 shrink-0">
         <button
           onClick={(e) => {
             e.stopPropagation();
             router.push('/gallery');
           }}
-          className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center text-sm font-bold active:scale-95"
+          className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center text-sm font-bold active:scale-95 z-30"
         >
           ✕
         </button>
 
-        <div className="flex-1 max-w-[180px] mx-2" onClick={(e) => e.stopPropagation()}>
+        <div className="flex-1 max-w-[180px] mx-2 z-30" onClick={(e) => e.stopPropagation()}>
           <input
             type="text"
             value={lotNumber}
@@ -234,34 +234,36 @@ function CameraContent() {
             e.stopPropagation();
             router.push('/gallery');
           }}
-          className="bg-neutral-900 border border-neutral-800 rounded-full px-3 py-1.5 flex items-center gap-1 active:scale-95"
+          className="bg-neutral-900 border border-neutral-800 rounded-full px-3 py-1.5 flex items-center gap-1 active:scale-95 z-30"
         >
           <span className="text-[10px] text-neutral-400 font-mono">COUNT:</span>
           <span className="text-xs font-bold text-yellow-400 font-mono">{photoCount}</span>
         </button>
       </div>
 
-      {/* Viewfinder: Inline native capture with zero full-screen previews */}
-      <div
-        onTouchStart={triggerPhotoCapture}
-        onClick={triggerPhotoCapture}
-        className="flex-1 my-1 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0 w-full cursor-pointer touch-none active:opacity-90"
-      >
+      {/* Main Viewfinder Container */}
+      <div className="flex-1 my-1 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0 w-full">
+        {/* Live Video Feed */}
         <video
           ref={videoRef}
           playsInline
-          webkit-playsinline="true"
           muted
           autoPlay
-          className="w-full h-full object-cover max-h-full pointer-events-none"
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none"
+        />
+
+        {/* Transparent Touch Overlay: Captures screen taps and blocks mobile video full-screen triggers */}
+        <div
+          onPointerDown={triggerPhotoCapture}
+          className="absolute inset-0 z-10 w-full h-full cursor-pointer touch-none bg-transparent"
         />
 
         {!cameraReady ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-neutral-950 text-neutral-500 text-xs font-mono">
+          <div className="absolute inset-0 flex items-center justify-center bg-neutral-950 text-neutral-500 text-xs font-mono z-0">
             Starting Camera...
           </div>
         ) : (
-          <div className="absolute bottom-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-mono text-neutral-300 pointer-events-none border border-white/10">
+          <div className="absolute bottom-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-mono text-neutral-300 pointer-events-none border border-white/10 z-20">
             TAP SCREEN TO TAKE PHOTO
           </div>
         )}
@@ -272,7 +274,7 @@ function CameraContent() {
 
 export default function CameraPage() {
   return (
-    <Suspense fallback={<div className="fixed inset-0 w-screen h-screen bg-black text-white flex items-center justify-center text-xs font-mono">Loading Camera...</div>}>
+    <Suspense fallback={<div className="fixed inset-0 w-full h-full bg-black text-white flex items-center justify-center text-xs font-mono">Loading Camera...</div>}>
       <CameraContent />
     </Suspense>
   );
