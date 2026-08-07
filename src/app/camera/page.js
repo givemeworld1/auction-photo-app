@@ -30,7 +30,7 @@ async function savePhotoToQueue(lotNumber, blob) {
       lotNumber,
       blob,
       timestamp: new Date().toISOString(),
-      dateStr: new Date().toISOString().split('T')[0] // YYYY-MM-DD
+      dateStr: new Date().toISOString().split('T')[0]
     };
     const req = store.add(record);
     req.onsuccess = () => resolve(req.result);
@@ -78,12 +78,13 @@ function CameraContent() {
   const [queueCount, setQueueCount] = useState(0);
   const [sessionCount, setSessionCount] = useState(0);
   const [flashFeedback, setFlashFeedback] = useState(false);
+  const [activeZoom, setActiveZoom] = useState(1);
 
-  // Read user presets from localStorage
+  // Read saved presets from localStorage
   const presetZoom = parseFloat(typeof window !== 'undefined' ? localStorage.getItem('camera_preset_zoom') || '1' : '1');
   const presetFlash = typeof window !== 'undefined' ? localStorage.getItem('camera_preset_flash') || 'off' : 'off';
 
-  // 1. Initialize Camera Stream
+  // 1. Initialize Camera Stream & Apply Presets
   useEffect(() => {
     let activeStream = null;
 
@@ -102,22 +103,33 @@ function CameraContent() {
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.play().catch((e) => console.log('Play error:', e));
+          await videoRef.current.play().catch((e) => console.log('Play error:', e));
         }
 
+        // Apply hardware constraints after stream starts playing
         const track = stream.getVideoTracks()[0];
         if (track && track.getCapabilities) {
           const capabilities = track.getCapabilities();
+          const constraints = {};
 
-          // Apply Torch Preset
-          if (capabilities.torch && presetFlash === 'on') {
-            track.applyConstraints({ advanced: [{ torch: true }] }).catch(() => {});
+          // Apply Flash/Torch Preset
+          if (capabilities.torch && (presetFlash === 'on' || presetFlash === 'auto')) {
+            constraints.torch = true;
           }
 
-          // Apply Zoom Preset
+          // Apply Zoom Preset within device bounds
           if (capabilities.zoom) {
-            const clampedZoom = Math.max(capabilities.zoom.min || 1, Math.min(capabilities.zoom.max || 3, presetZoom));
-            track.applyConstraints({ advanced: [{ zoom: clampedZoom }] }).catch(() => {});
+            const minZ = capabilities.zoom.min || 1;
+            const maxZ = capabilities.zoom.max || 1;
+            const targetZoom = Math.max(minZ, Math.min(maxZ, presetZoom));
+            constraints.zoom = targetZoom;
+            setActiveZoom(targetZoom);
+          }
+
+          if (Object.keys(constraints).length > 0) {
+            await track.applyConstraints({ advanced: [constraints] }).catch((err) => {
+              console.warn('Constraint application deferred:', err);
+            });
           }
         }
       } catch (err) {
@@ -134,7 +146,7 @@ function CameraContent() {
     };
   }, [presetZoom, presetFlash]);
 
-  // 2. Background Queue Processor (Upload & Delete locally)
+  // 2. Background Queue Upload Processor
   useEffect(() => {
     let isUploading = false;
 
@@ -171,7 +183,6 @@ function CameraContent() {
             })
           });
 
-          // Delete from local phone storage once safely in cloud
           await removeQueueItem(item.id);
           setQueueCount((prev) => Math.max(0, prev - 1));
         }
@@ -185,20 +196,23 @@ function CameraContent() {
     return () => clearInterval(interval);
   }, []);
 
-  // 3. Instant Touch Capture
-  const handleTapToShoot = async (e) => {
-    e.stopPropagation();
+  // 3. Robust Touch & Click Trigger for Continuous Capture
+  const handleTriggerShoot = async (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
 
     if (!videoRef.current) return;
     const video = videoRef.current;
     if (video.readyState < 2) return;
 
-    // Haptic feedback + Visual Flash shutter animation
+    // Trigger visual shutter feedback + device vibration
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(40);
+      navigator.vibrate(35);
     }
     setFlashFeedback(true);
-    setTimeout(() => setFlashFeedback(false), 80);
+    setTimeout(() => setFlashFeedback(false), 70);
 
     const canvas = canvasRef.current || document.createElement('canvas');
     canvas.width = video.videoWidth || 1280;
@@ -211,7 +225,6 @@ function CameraContent() {
       async (blob) => {
         if (!blob) return;
 
-        // Save immediately to local queue
         await savePhotoToQueue(lotNumber, blob);
         setSessionCount((prev) => prev + 1);
         setQueueCount((prev) => prev + 1);
@@ -223,16 +236,16 @@ function CameraContent() {
 
   return (
     <div
-      onClick={handleTapToShoot}
-      className="fixed inset-0 w-full bg-black select-none overflow-hidden cursor-pointer"
+      onPointerDown={handleTriggerShoot}
+      className="fixed inset-0 w-full bg-black select-none overflow-hidden touch-none"
       style={{ height: '100dvh', maxHeight: '-webkit-fill-available' }}
     >
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Shutter Feedback Overlay */}
+      {/* Visual Shutter Feedback Flash */}
       {flashFeedback && <div className="absolute inset-0 z-50 bg-white opacity-80 pointer-events-none" />}
 
-      {/* Fullscreen Unobstructed Live Stream */}
+      {/* Fullscreen Video Stream */}
       <video
         ref={videoRef}
         autoPlay
@@ -242,24 +255,27 @@ function CameraContent() {
         className="pointer-events-none"
       />
 
-      {/* Minimal Top Lot Badge */}
-      <div className="absolute top-4 left-4 z-30 pointer-events-none flex items-center gap-2 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
+      {/* Top Lot Badge & Preset Readout */}
+      <div className="absolute top-4 left-4 z-30 pointer-events-none flex items-center gap-2 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
         <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
         <span className="font-mono text-xs font-extrabold text-yellow-400">LOT: {lotNumber}</span>
+        <span className="font-mono text-[10px] text-neutral-400 border-l border-neutral-700 pl-2">
+          {activeZoom}x
+        </span>
       </div>
 
       {/* Exit Button */}
       <button
-        onClick={(e) => {
+        onPointerDown={(e) => {
           e.stopPropagation();
           router.push('/');
         }}
-        className="absolute top-4 right-4 z-40 w-9 h-9 rounded-full bg-black/60 border border-white/10 flex items-center justify-center text-white text-xs font-bold"
+        className="absolute top-4 right-4 z-40 w-9 h-9 rounded-full bg-black/70 border border-white/20 flex items-center justify-center text-white text-xs font-bold active:scale-90"
       >
         ✕
       </button>
 
-      {/* Minimal Bottom Status Display */}
+      {/* Bottom Status Counter */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center gap-3 bg-black/70 backdrop-blur-md px-4 py-2 rounded-full border border-white/15">
         <span className="text-[11px] font-mono font-extrabold text-white">
           SHOTS: <span className="text-yellow-400">{sessionCount}</span>
