@@ -35,16 +35,15 @@ async function savePhotoToQueue(photoData) {
   }
 }
 
-// Generate a light shutter click WAV audio file directly in memory
+// Memory-synthesized shutter sound WAV blob
 function createShutterAudio() {
   if (typeof window === 'undefined') return null;
-  
+
   const sampleRate = 8000;
   const numSamples = sampleRate * 0.08; // 80ms duration
   const buffer = new ArrayBuffer(44 + numSamples);
   const view = new DataView(buffer);
 
-  // WAV Header
   const writeString = (offset, string) => {
     for (let i = 0; i < string.length; i++) {
       view.setUint8(offset + i, string.charCodeAt(i));
@@ -65,9 +64,8 @@ function createShutterAudio() {
   writeString(36, 'data');
   view.setUint32(40, numSamples, true);
 
-  // Generate simple click noise curve
   for (let i = 0; i < numSamples; i++) {
-    const decay = 1 - (i / numSamples);
+    const decay = 1 - i / numSamples;
     const sample = Math.sin(i * 0.4) * decay * 127 + 128;
     view.setUint8(44 + i, sample);
   }
@@ -98,7 +96,6 @@ function CameraContent() {
     audioRef.current = createShutterAudio();
   }, [searchParams]);
 
-  // Audio trigger
   const playSound = () => {
     try {
       if (audioRef.current) {
@@ -106,11 +103,10 @@ function CameraContent() {
         audioRef.current.play().catch(() => {});
       }
     } catch (e) {
-      // Audio fallback ignored to keep image capture running
+      // Ignore audio block to prevent stopping capture execution
     }
   };
 
-  // Initialize camera stream
   useEffect(() => {
     let stream = null;
 
@@ -134,7 +130,7 @@ function CameraContent() {
         }
       } catch (err) {
         console.error('Camera access error:', err);
-        alert('Camera permissions required. Please check your browser settings.');
+        alert('Camera permissions required. Please check browser settings.');
       }
     }
 
@@ -162,7 +158,6 @@ function CameraContent() {
 
     setIsCapturing(true);
 
-    // Play Shutter Sound & Screen Flash
     playSound();
     setFlashFeedback(true);
     setTimeout(() => setFlashFeedback(false), 120);
@@ -209,19 +204,22 @@ function CameraContent() {
     <div className="fixed inset-0 h-[100dvh] w-full bg-black text-white flex flex-col justify-between p-3 select-none font-sans overflow-hidden box-border">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Screen flash on picture take */}
+      {/* Screen flash feedback */}
       {flashFeedback && <div className="fixed inset-0 bg-white z-50 pointer-events-none opacity-80" />}
 
-      {/* Header Bar */}
+      {/* Top Controls Bar */}
       <div className="h-12 px-1 flex justify-between items-center z-10 shrink-0">
         <button
-          onClick={() => router.push(`/gallery`)}
+          onClick={(e) => {
+            e.stopPropagation();
+            router.push('/gallery');
+          }}
           className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center text-sm font-bold active:scale-95"
         >
           ✕
         </button>
 
-        <div className="flex-1 max-w-[180px] mx-2">
+        <div className="flex-1 max-w-[180px] mx-2" onClick={(e) => e.stopPropagation()}>
           <input
             type="text"
             value={lotNumber}
@@ -231,14 +229,24 @@ function CameraContent() {
           />
         </div>
 
-        <div className="bg-neutral-900 border border-neutral-800 rounded-full px-3 py-1 flex items-center gap-1">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            router.push('/gallery');
+          }}
+          className="bg-neutral-900 border border-neutral-800 rounded-full px-3 py-1.5 flex items-center gap-1 active:scale-95"
+        >
           <span className="text-[10px] text-neutral-400 font-mono">COUNT:</span>
           <span className="text-xs font-bold text-yellow-400 font-mono">{photoCount}</span>
-        </div>
+        </button>
       </div>
 
-      {/* Viewfinder - Strictly contained within the available viewport */}
-      <div className="flex-1 my-2 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0 w-full">
+      {/* Entire Camera Viewfinder acts as the touch shutter button */}
+      <div
+        onTouchStart={triggerPhotoCapture}
+        onClick={triggerPhotoCapture}
+        className="flex-1 my-2 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0 w-full cursor-pointer touch-none active:opacity-90"
+      >
         <video
           ref={videoRef}
           playsInline
@@ -247,39 +255,15 @@ function CameraContent() {
           className="w-full h-full object-cover max-h-full pointer-events-none"
         />
 
-        {!cameraReady && (
+        {!cameraReady ? (
           <div className="absolute inset-0 flex items-center justify-center bg-neutral-950 text-neutral-500 text-xs font-mono">
             Starting Camera...
           </div>
-        )}
-      </div>
-
-      {/* Bottom Shutter Controls */}
-      <div className="h-20 px-2 flex justify-around items-center z-10 shrink-0">
-        <button
-          onClick={() => router.push('/gallery')}
-          className="w-12 h-12 rounded-xl bg-neutral-900 border border-neutral-800 flex flex-col items-center justify-center active:scale-95"
-        >
-          <span className="text-base">📁</span>
-          <span className="text-[8px] font-mono font-bold text-neutral-400">FOLDERS</span>
-        </button>
-
-        {/* Big Yellow Shutter Button with Direct Touch Event Handlers */}
-        <button
-          type="button"
-          onTouchStart={triggerPhotoCapture}
-          onClick={triggerPhotoCapture}
-          disabled={isCapturing}
-          className={`w-18 h-18 rounded-full border-4 border-white flex items-center justify-center p-1 active:scale-90 transition-transform touch-none ${
-            isCapturing ? 'opacity-50 scale-95' : 'opacity-100'
-          }`}
-        >
-          <div className="w-16 h-16 rounded-full bg-yellow-400 pointer-events-none flex items-center justify-center">
-            <div className="w-12 h-12 rounded-full border-2 border-black/20" />
+        ) : (
+          <div className="absolute bottom-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-mono text-neutral-300 pointer-events-none border border-white/10">
+            TAP SCREEN TO TAKE PHOTO
           </div>
-        </button>
-
-        <div className="w-12 h-12" />
+        )}
       </div>
     </div>
   );
