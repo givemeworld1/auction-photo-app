@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 const DB_NAME = 'AutoCamDB';
@@ -35,7 +35,7 @@ async function savePhotoToQueue(photoData) {
   }
 }
 
-export default function CameraPage() {
+function CameraContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -257,5 +257,13 @@ export default function CameraPage() {
         <div className="w-12 h-12" />
       </div>
     </div>
+  );
+}
+
+export default function CameraPage() {
+  return (
+    <Suspense fallback={<div className="fixed inset-0 bg-black text-white flex items-center justify-center text-xs font-mono">Loading Camera...</div>}>
+      <CameraContent />
+    </Suspense>
   );
 }
