@@ -81,8 +81,11 @@ function CameraContent() {
   const [activeZoom, setActiveZoom] = useState(1);
 
   // Read saved presets from localStorage
-  const presetZoom = parseFloat(typeof window !== 'undefined' ? localStorage.getItem('camera_preset_zoom') || '1' : '1');
-  const presetFlash = typeof window !== 'undefined' ? localStorage.getItem('camera_preset_flash') || 'off' : 'off';
+  const presetZoom = parseFloat(
+    typeof window !== 'undefined' ? localStorage.getItem('camera_preset_zoom') || '1' : '1'
+  );
+  const presetFlash =
+    typeof window !== 'undefined' ? localStorage.getItem('camera_preset_flash') || 'off' : 'off';
 
   // 1. Initialize Camera Stream & Apply Presets
   useEffect(() => {
@@ -112,12 +115,10 @@ function CameraContent() {
           const capabilities = track.getCapabilities();
           const constraints = {};
 
-          // Apply Flash/Torch Preset
           if (capabilities.torch && (presetFlash === 'on' || presetFlash === 'auto')) {
             constraints.torch = true;
           }
 
-          // Apply Zoom Preset within device bounds
           if (capabilities.zoom) {
             const minZ = capabilities.zoom.min || 1;
             const maxZ = capabilities.zoom.max || 1;
@@ -196,7 +197,7 @@ function CameraContent() {
     return () => clearInterval(interval);
   }, []);
 
-  // 3. Robust Touch & Click Trigger for Continuous Capture
+  // 3. Instant Touch Capture
   const handleTriggerShoot = async (e) => {
     if (e) {
       e.preventDefault();
@@ -236,8 +237,7 @@ function CameraContent() {
 
   return (
     <div
-      onPointerDown={handleTriggerShoot}
-      className="fixed inset-0 w-full bg-black select-none overflow-hidden touch-none"
+      className="fixed inset-0 w-full bg-black select-none overflow-hidden"
       style={{ height: '100dvh', maxHeight: '-webkit-fill-available' }}
     >
       <canvas ref={canvasRef} className="hidden" />
@@ -255,6 +255,14 @@ function CameraContent() {
         className="pointer-events-none"
       />
 
+      {/* Transparent Active Touch Overlay Button (Captures all touches) */}
+      <button
+        type="button"
+        onTouchStart={handleTriggerShoot}
+        onClick={handleTriggerShoot}
+        className="absolute inset-0 z-20 w-full h-full bg-transparent border-0 cursor-pointer outline-none active:bg-white/5"
+      />
+
       {/* Top Lot Badge & Preset Readout */}
       <div className="absolute top-4 left-4 z-30 pointer-events-none flex items-center gap-2 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
         <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
@@ -266,11 +274,16 @@ function CameraContent() {
 
       {/* Exit Button */}
       <button
-        onPointerDown={(e) => {
+        type="button"
+        onClick={(e) => {
           e.stopPropagation();
           router.push('/');
         }}
-        className="absolute top-4 right-4 z-40 w-9 h-9 rounded-full bg-black/70 border border-white/20 flex items-center justify-center text-white text-xs font-bold active:scale-90"
+        onTouchStart={(e) => {
+          e.stopPropagation();
+          router.push('/');
+        }}
+        className="absolute top-4 right-4 z-40 w-10 h-10 rounded-full bg-black/70 border border-white/20 flex items-center justify-center text-white text-sm font-bold active:scale-90"
       >
         ✕
       </button>
