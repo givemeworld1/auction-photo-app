@@ -3,32 +3,82 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
+const DB_NAME = 'AutoCamDB';
+const STORE_NAME = 'photoQueue';
+
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getAllLocalQueuePhotos() {
+  try {
+    const db = await openDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const records = req.result || [];
+        const formatted = records.map((r) => ({
+          id: `local-${r.id}`,
+          lotNumber: r.lotNumber,
+          dateStr: r.dateStr,
+          cloudinaryUrl: URL.createObjectURL(r.blob),
+          isLocal: true
+        }));
+        resolve(formatted);
+      };
+      req.onerror = () => resolve([]);
+    });
+  } catch (e) {
+    return [];
+  }
+}
+
 export default function GalleryPage() {
   const router = useRouter();
 
-  // Navigation & state variables
   const [photos, setPhotos] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedLot, setSelectedLot] = useState(null); // Active folder view
-  const [activePhoto, setActivePhoto] = useState(null); // Photo open in Editor
+  const [selectedLot, setSelectedLot] = useState(null);
+  const [activePhoto, setActivePhoto] = useState(null);
 
-  // Editor adjustments
   const [brightness, setBrightness] = useState(100);
   const [contrast, setContrast] = useState(100);
   const [rotation, setRotation] = useState(0);
 
-  // Fetch photos from server database
   useEffect(() => {
     async function fetchGalleryData() {
       try {
-        const res = await fetch('/api/photos');
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setPhotos(data);
+        // 1. Get queued photos from local phone storage
+        const localPhotos = await getAllLocalQueuePhotos();
+
+        // 2. Get uploaded photos from server database
+        let serverPhotos = [];
+        try {
+          const res = await fetch('/api/photos');
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            serverPhotos = data;
+          }
+        } catch (e) {
+          console.warn('Server fetch error:', e);
         }
+
+        setPhotos([...localPhotos, ...serverPhotos]);
       } catch (err) {
         console.error('Error loading gallery photos:', err);
-      } finally {
+      } font-mono {
         setLoading(false);
       }
     }
@@ -37,7 +87,7 @@ export default function GalleryPage() {
 
   // Group photos by Date -> Lot Number
   const groupedGallery = photos.reduce((acc, photo) => {
-    const dateKey = photo.dateStr || photo.createdAt?.split('T')[0] || 'Unassigned Date';
+    const dateKey = photo.dateStr || photo.createdAt?.split('T')[0] || new Date().toISOString().split('T')[0];
     const lotKey = photo.lotNumber || 'UNNAMED-LOT';
 
     if (!acc[dateKey]) acc[dateKey] = {};
@@ -47,23 +97,22 @@ export default function GalleryPage() {
     return acc;
   }, {});
 
-  // Delete single photo
-  const handleDeletePhoto = async (photoId, e) => {
+  const handleDeletePhoto = async (photo, e) => {
     if (e) e.stopPropagation();
     if (!confirm('Are you sure you want to delete this photo?')) return;
 
-    try {
-      await fetch(`/api/photos?id=${photoId}`, { method: 'DELETE' });
-      setPhotos((prev) => prev.filter((p) => p._id !== photoId && p.id !== photoId));
-      if (activePhoto && (activePhoto._id === photoId || activePhoto.id === photoId)) {
-        setActivePhoto(null);
+    if (!photo.isLocal && (photo._id || photo.id)) {
+      try {
+        await fetch(`/api/photos?id=${photo._id || photo.id}`, { method: 'DELETE' });
+      } catch (err) {
+        console.error('Delete error:', err);
       }
-    } catch (err) {
-      console.error('Delete error:', err);
     }
+
+    setPhotos((prev) => prev.filter((p) => p !== photo));
+    if (activePhoto === photo) setActivePhoto(null);
   };
 
-  // Open photo in editor
   const handleOpenEditor = (photo, e) => {
     if (e) e.stopPropagation();
     setBrightness(100);
@@ -118,7 +167,6 @@ export default function GalleryPage() {
             Loading folders...
           </div>
         ) : selectedLot ? (
-          
           /* VIEW 2: Inside Lot Folder */
           <div className="grid grid-cols-2 gap-3 p-1">
             {selectedLot.photos.map((photo, index) => (
@@ -132,6 +180,12 @@ export default function GalleryPage() {
                   className="w-full h-full object-cover"
                 />
 
+                {photo.isLocal && (
+                  <span className="absolute top-2 left-2 bg-blue-500 text-white text-[9px] font-mono px-2 py-0.5 rounded-full font-bold">
+                    PENDING SYNC
+                  </span>
+                )}
+
                 {/* Photo Action Overlay */}
                 <div className="absolute inset-0 bg-black/40 opacity-100 flex items-end justify-between p-2">
                   <button
@@ -142,7 +196,7 @@ export default function GalleryPage() {
                   </button>
 
                   <button
-                    onClick={(e) => handleDeletePhoto(photo._id || photo.id, e)}
+                    onClick={(e) => handleDeletePhoto(photo, e)}
                     className="w-7 h-7 rounded-lg bg-red-500/80 text-white text-xs font-bold flex items-center justify-center backdrop-blur-md active:scale-95"
                   >
                     🗑️
@@ -152,7 +206,6 @@ export default function GalleryPage() {
             ))}
           </div>
         ) : (
-
           /* VIEW 1: Date & Lot Folder Directory */
           <div className="space-y-6">
             {Object.keys(groupedGallery).length === 0 ? (
@@ -237,7 +290,6 @@ export default function GalleryPage() {
             </button>
           </div>
 
-          {/* Canvas Preview with Dynamic Filters */}
           <div className="flex-1 my-6 flex items-center justify-center overflow-hidden">
             <img
               src={activePhoto.cloudinaryUrl || activePhoto.url}
@@ -250,7 +302,6 @@ export default function GalleryPage() {
             />
           </div>
 
-          {/* Quick Controls */}
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3">
             <div className="flex justify-between items-center gap-4">
               <span className="text-xs font-bold text-neutral-400">Rotate</span>
