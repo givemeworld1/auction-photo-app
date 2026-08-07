@@ -34,6 +34,7 @@ async function getAllLocalQueuePhotos() {
           lotNumber: r.lotNumber,
           dateStr: r.dateStr,
           cloudinaryUrl: URL.createObjectURL(r.blob),
+          blobSize: r.blob?.size || 0,
           isLocal: true
         }));
         resolve(formatted);
@@ -43,6 +44,16 @@ async function getAllLocalQueuePhotos() {
   } catch (e) {
     return [];
   }
+}
+
+// Convert Cloudinary URL to low-res lightweight thumbnail (~10-20KB max)
+function getLowResThumbnailUrl(url) {
+  if (!url) return '';
+  if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
+    // Inserts Cloudinary transformations for auto-format, quality low, width 300px
+    return url.replace('/upload/', '/upload/w_300,q_auto:eco,f_auto/');
+  }
+  return url;
 }
 
 export default function GalleryPage() {
@@ -60,13 +71,11 @@ export default function GalleryPage() {
   useEffect(() => {
     async function fetchGalleryData() {
       try {
-        // 1. Get queued photos from local phone storage
         const localPhotos = await getAllLocalQueuePhotos();
 
-        // 2. Get uploaded photos from server database
         let serverPhotos = [];
         try {
-          const res = await fetch('/api/photos');
+          const res = await fetch('/api/photos/upload');
           const data = await res.json();
           if (Array.isArray(data)) {
             serverPhotos = data;
@@ -99,17 +108,26 @@ export default function GalleryPage() {
 
   const handleDeletePhoto = async (photo, e) => {
     if (e) e.stopPropagation();
-    if (!confirm('Are you sure you want to delete this photo?')) return;
+    if (!confirm('Delete photo?')) return;
 
     if (!photo.isLocal && (photo._id || photo.id)) {
       try {
-        await fetch(`/api/photos?id=${photo._id || photo.id}`, { method: 'DELETE' });
+        await fetch(`/api/photos/upload?id=${photo._id || photo.id}`, { method: 'DELETE' });
       } catch (err) {
         console.error('Delete error:', err);
       }
     }
 
     setPhotos((prev) => prev.filter((p) => p !== photo));
+    
+    // Update active folder view
+    if (selectedLot) {
+      setSelectedLot((prev) => ({
+        ...prev,
+        photos: prev.photos.filter((p) => p !== photo)
+      }));
+    }
+
     if (activePhoto === photo) setActivePhoto(null);
   };
 
@@ -124,8 +142,8 @@ export default function GalleryPage() {
   return (
     <div className="fixed inset-0 bg-neutral-950 text-white flex flex-col justify-between p-4 select-none font-sans overflow-y-auto">
       
-      {/* Top Bar Header */}
-      <div className="pt-4 pb-4 px-2 flex justify-between items-center border-b border-neutral-800/80">
+      {/* Navigation Header */}
+      <div className="pt-2 pb-3 px-1 flex justify-between items-center border-b border-neutral-800/80">
         <button
           onClick={() => {
             if (selectedLot) {
@@ -134,132 +152,136 @@ export default function GalleryPage() {
               router.push('/');
             }
           }}
-          className="w-9 h-9 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center text-xs font-bold active:scale-95 transition-transform"
+          className="w-9 h-9 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center text-xs font-bold active:scale-95"
         >
           {selectedLot ? '←' : '✕'}
         </button>
 
         <div className="text-center">
           <h1 className="text-sm font-extrabold tracking-wide">
-            {selectedLot ? `LOT: ${selectedLot.lotNumber}` : 'Gallery Directory'}
+            {selectedLot ? `LOT: ${selectedLot.lotNumber}` : 'DIRECTORY FOLDERS'}
           </h1>
           <p className="text-[10px] text-neutral-400 font-mono">
-            {selectedLot ? `${selectedLot.photos.length} PHOTOS` : 'DATE & LOT STRUCTURE'}
+            {selectedLot ? `${selectedLot.photos.length} THUMBNAILS (<20KB)` : 'DATE & LOT STRUCTURE'}
           </p>
         </div>
 
         {selectedLot ? (
           <button
             onClick={() => router.push(`/camera?lot=${encodeURIComponent(selectedLot.lotNumber)}`)}
-            className="px-3 py-1.5 rounded-full bg-yellow-400 text-black text-xs font-extrabold flex items-center gap-1 active:scale-95 transition-transform shadow-sm shadow-yellow-400/20"
+            className="px-3 py-1.5 rounded-full bg-yellow-400 text-black text-xs font-extrabold flex items-center gap-1 active:scale-95"
           >
-            <span>📷</span> +More
+            <span>📷</span> +Add
           </button>
         ) : (
           <div className="w-9" />
         )}
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 my-4 overflow-y-auto">
+      {/* Main Folder Directory OR Folder Content */}
+      <div className="flex-1 my-3 overflow-y-auto">
         {loading ? (
           <div className="h-64 flex items-center justify-center text-xs font-mono text-neutral-500">
-            Loading folders...
+            Scanning folders...
           </div>
         ) : selectedLot ? (
-          /* VIEW 2: Inside Lot Folder */
-          <div className="grid grid-cols-2 gap-3 p-1">
-            {selectedLot.photos.map((photo, index) => (
-              <div
-                key={photo._id || photo.id || index}
-                className="relative group bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden aspect-square"
-              >
-                <img
-                  src={photo.cloudinaryUrl || photo.url}
-                  alt="Lot preview"
-                  className="w-full h-full object-cover"
-                />
+          /* STEP 2: INSIDE FOLDER -> Lightweight Small Thumbnails Grid */
+          <div className="grid grid-cols-3 gap-2 p-1">
+            {selectedLot.photos.map((photo, index) => {
+              const thumbUrl = getLowResThumbnailUrl(photo.cloudinaryUrl || photo.url);
+              const estKB = photo.blobSize ? (photo.blobSize / 1024).toFixed(1) : '~15';
 
-                {photo.isLocal && (
-                  <span className="absolute top-2 left-2 bg-blue-500 text-white text-[9px] font-mono px-2 py-0.5 rounded-full font-bold">
-                    PENDING SYNC
+              return (
+                <div
+                  key={photo._id || photo.id || index}
+                  onClick={(e) => handleOpenEditor(photo, e)}
+                  className="relative bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden aspect-square cursor-pointer active:scale-95 transition-transform"
+                >
+                  {/* Thumbnail Image */}
+                  <img
+                    src={thumbUrl}
+                    alt="Thumbnail"
+                    loading="lazy"
+                    className="w-full h-full object-cover"
+                  />
+
+                  {/* Size & Sync Indicators */}
+                  <span className="absolute top-1 left-1 bg-black/75 backdrop-blur-md text-[8px] font-mono px-1.5 py-0.5 rounded text-neutral-300 border border-white/10">
+                    {estKB} KB
                   </span>
-                )}
 
-                {/* Photo Action Overlay */}
-                <div className="absolute inset-0 bg-black/40 opacity-100 flex items-end justify-between p-2">
-                  <button
-                    onClick={(e) => handleOpenEditor(photo, e)}
-                    className="px-2.5 py-1 rounded-lg bg-neutral-900/90 border border-white/20 text-[10px] font-bold text-white backdrop-blur-md active:scale-95"
-                  >
-                    ✏️ Edit
-                  </button>
+                  {photo.isLocal && (
+                    <span className="absolute bottom-1 left-1 bg-blue-600 text-white text-[7px] font-mono px-1 py-0.5 rounded font-bold">
+                      QUEUE
+                    </span>
+                  )}
 
+                  {/* Delete Button */}
                   <button
                     onClick={(e) => handleDeletePhoto(photo, e)}
-                    className="w-7 h-7 rounded-lg bg-red-500/80 text-white text-xs font-bold flex items-center justify-center backdrop-blur-md active:scale-95"
+                    className="absolute top-1 right-1 w-5 h-5 rounded bg-red-600/90 text-white text-[10px] font-bold flex items-center justify-center backdrop-blur-md"
                   >
-                    🗑️
+                    ✕
                   </button>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
-          /* VIEW 1: Date & Lot Folder Directory */
-          <div className="space-y-6">
+          /* STEP 1: MAIN GALLERY -> Folders grouped by Date and Lot */
+          <div className="space-y-5">
             {Object.keys(groupedGallery).length === 0 ? (
               <div className="h-64 flex flex-col items-center justify-center text-center p-6">
                 <span className="text-3xl mb-2">📁</span>
-                <p className="text-sm font-bold text-neutral-300">No Folders Found</p>
-                <p className="text-xs text-neutral-500 mt-1">Start taking photos to create Lot folders.</p>
+                <p className="text-sm font-bold text-neutral-300">No Folders Created</p>
+                <p className="text-xs text-neutral-500 mt-1">Capture photos to generate Lot folders automatically.</p>
               </div>
             ) : (
               Object.entries(groupedGallery).map(([dateStr, lotGroup]) => (
-                <div key={dateStr} className="space-y-3">
-                  {/* Date Group Header */}
+                <div key={dateStr} className="space-y-2">
                   <div className="flex items-center gap-2 px-1">
-                    <span className="text-xs font-mono font-bold text-yellow-400 bg-yellow-400/10 px-2.5 py-0.5 rounded-md border border-yellow-500/20">
+                    <span className="text-[11px] font-mono font-bold text-yellow-400 bg-yellow-400/10 px-2 py-0.5 rounded border border-yellow-500/20">
                       📅 {dateStr}
                     </span>
                   </div>
 
-                  {/* Lot Folders */}
                   <div className="grid grid-cols-2 gap-3">
-                    {Object.entries(lotGroup).map(([lotNum, folderPhotos]) => (
-                      <div
-                        key={lotNum}
-                        onClick={() => setSelectedLot({ lotNumber: lotNum, photos: folderPhotos })}
-                        className="bg-neutral-900 border border-neutral-800 rounded-2xl p-3 flex flex-col justify-between hover:border-neutral-700 active:scale-98 transition-all cursor-pointer"
-                      >
-                        {/* Preview Thumbnail Grid */}
-                        <div className="w-full h-24 bg-neutral-950 rounded-xl overflow-hidden mb-3 relative">
-                          {folderPhotos[0] ? (
-                            <img
-                              src={folderPhotos[0].cloudinaryUrl || folderPhotos[0].url}
-                              alt="Lot Folder cover"
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center text-neutral-700 text-xl">
-                              📷
-                            </div>
-                          )}
-                          <span className="absolute top-2 right-2 bg-black/80 backdrop-blur-md px-2 py-0.5 rounded-full text-[10px] font-mono font-extrabold text-white">
-                            {folderPhotos.length}
-                          </span>
-                        </div>
+                    {Object.entries(lotGroup).map(([lotNum, folderPhotos]) => {
+                      const coverThumb = getLowResThumbnailUrl(folderPhotos[0]?.cloudinaryUrl || folderPhotos[0]?.url);
 
-                        {/* Folder Info */}
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="text-xs font-extrabold text-white font-mono">LOT {lotNum}</p>
-                            <p className="text-[10px] text-neutral-400">Tap to inspect</p>
+                      return (
+                        <div
+                          key={lotNum}
+                          onClick={() => setSelectedLot({ lotNumber: lotNum, photos: folderPhotos })}
+                          className="bg-neutral-900 border border-neutral-800 rounded-xl p-2.5 flex flex-col justify-between hover:border-neutral-700 active:scale-98 transition-all cursor-pointer"
+                        >
+                          <div className="w-full h-20 bg-neutral-950 rounded-lg overflow-hidden mb-2 relative">
+                            {coverThumb ? (
+                              <img
+                                src={coverThumb}
+                                alt="Folder Cover"
+                                loading="lazy"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-neutral-700 text-lg">
+                                📁
+                              </div>
+                            )}
+                            <span className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] font-mono font-bold text-white">
+                              {folderPhotos.length} items
+                            </span>
                           </div>
-                          <span className="text-neutral-500 text-xs">→</span>
+
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <p className="text-xs font-bold text-white font-mono">LOT {lotNum}</p>
+                              <p className="text-[9px] text-neutral-400">Open folder →</p>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))
@@ -268,53 +290,50 @@ export default function GalleryPage() {
         )}
       </div>
 
-      {/* Editor Modal */}
+      {/* Editor / Full View Modal (Opens when tapping thumbnail) */}
       {activePhoto && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex flex-col justify-between p-4">
-          <div className="flex justify-between items-center pt-4">
+        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between p-4">
+          <div className="flex justify-between items-center pt-2">
             <button
               onClick={() => setActivePhoto(null)}
-              className="w-9 h-9 rounded-full bg-neutral-900 text-white flex items-center justify-center text-xs font-bold"
+              className="w-8 h-8 rounded-full bg-neutral-900 text-white flex items-center justify-center text-xs font-bold"
             >
               ✕
             </button>
-            <h2 className="text-xs font-bold font-mono text-yellow-400">PHOTO EDITOR</h2>
+            <h2 className="text-xs font-bold font-mono text-yellow-400">INSPECT & EDIT</h2>
             <button
-              onClick={() => {
-                alert('Edits applied successfully!');
-                setActivePhoto(null);
-              }}
+              onClick={() => setActivePhoto(null)}
               className="px-3 py-1 rounded-full bg-yellow-400 text-black text-xs font-extrabold"
             >
               Done
             </button>
           </div>
 
-          <div className="flex-1 my-6 flex items-center justify-center overflow-hidden">
+          <div className="flex-1 my-4 flex items-center justify-center overflow-hidden">
             <img
               src={activePhoto.cloudinaryUrl || activePhoto.url}
-              alt="Editing preview"
+              alt="Full Preview"
               style={{
                 filter: `brightness(${brightness}%) contrast(${contrast}%)`,
                 transform: `rotate(${rotation}deg)`
               }}
-              className="max-h-full max-w-full object-contain rounded-xl transition-all"
+              className="max-h-full max-w-full object-contain rounded-lg"
             />
           </div>
 
-          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl p-4 space-y-3">
-            <div className="flex justify-between items-center gap-4">
-              <span className="text-xs font-bold text-neutral-400">Rotate</span>
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 space-y-2">
+            <div className="flex justify-between items-center">
+              <span className="text-[11px] font-bold text-neutral-400">Rotate</span>
               <button
                 onClick={() => setRotation((prev) => (prev + 90) % 360)}
-                className="py-1.5 px-4 rounded-xl bg-neutral-800 text-xs font-bold text-white border border-neutral-700"
+                className="py-1 px-3 rounded-lg bg-neutral-800 text-xs font-bold text-white border border-neutral-700"
               >
-                🔄 90° ({rotation}°)
+                🔄 90°
               </button>
             </div>
 
             <div className="space-y-1">
-              <div className="flex justify-between text-[11px] text-neutral-400 font-bold">
+              <div className="flex justify-between text-[10px] text-neutral-400 font-bold">
                 <span>Brightness</span>
                 <span>{brightness}%</span>
               </div>
@@ -324,21 +343,6 @@ export default function GalleryPage() {
                 max="150"
                 value={brightness}
                 onChange={(e) => setBrightness(e.target.value)}
-                className="w-full accent-yellow-400"
-              />
-            </div>
-
-            <div className="space-y-1">
-              <div className="flex justify-between text-[11px] text-neutral-400 font-bold">
-                <span>Contrast</span>
-                <span>{contrast}%</span>
-              </div>
-              <input
-                type="range"
-                min="50"
-                max="150"
-                value={contrast}
-                onChange={(e) => setContrast(e.target.value)}
                 className="w-full accent-yellow-400"
               />
             </div>
