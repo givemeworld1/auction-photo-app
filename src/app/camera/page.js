@@ -35,6 +35,49 @@ async function savePhotoToQueue(photoData) {
   }
 }
 
+// Generate a light shutter click WAV audio file directly in memory
+function createShutterAudio() {
+  if (typeof window === 'undefined') return null;
+  
+  const sampleRate = 8000;
+  const numSamples = sampleRate * 0.08; // 80ms duration
+  const buffer = new ArrayBuffer(44 + numSamples);
+  const view = new DataView(buffer);
+
+  // WAV Header
+  const writeString = (offset, string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + numSamples, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // Mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate, true);
+  view.setUint16(32, 1, true);
+  view.setUint16(34, 8, true);
+  writeString(36, 'data');
+  view.setUint32(40, numSamples, true);
+
+  // Generate simple click noise curve
+  for (let i = 0; i < numSamples; i++) {
+    const decay = 1 - (i / numSamples);
+    const sample = Math.sin(i * 0.4) * decay * 127 + 128;
+    view.setUint8(44 + i, sample);
+  }
+
+  const blob = new Blob([buffer], { type: 'audio/wav' });
+  const audio = new Audio(URL.createObjectURL(blob));
+  audio.volume = 1.0;
+  return audio;
+}
+
 function CameraContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -47,43 +90,27 @@ function CameraContent() {
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const audioCtxRef = useRef(null);
+  const audioRef = useRef(null);
 
   useEffect(() => {
     const lot = searchParams.get('lot');
     if (lot) setLotNumber(lot);
+    audioRef.current = createShutterAudio();
   }, [searchParams]);
 
-  const playShutterSound = () => {
+  // Audio trigger
+  const playSound = () => {
     try {
-      if (!audioCtxRef.current) {
-        const AudioContext = window.AudioContext || window.webkitAudioContext;
-        audioCtxRef.current = new AudioContext();
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(() => {});
       }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === 'suspended') ctx.resume();
-
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, now);
-      osc.frequency.exponentialRampToValueAtTime(120, now + 0.08);
-
-      gain.gain.setValueAtTime(0.3, now);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start(now);
-      osc.stop(now + 0.08);
     } catch (e) {
-      console.warn('Audio error:', e);
+      // Audio fallback ignored to keep image capture running
     }
   };
 
+  // Initialize camera stream
   useEffect(() => {
     let stream = null;
 
@@ -101,13 +128,13 @@ function CameraContent() {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.onloadedmetadata = () => {
-            videoRef.current.play();
+            videoRef.current.play().catch(() => {});
             setCameraReady(true);
           };
         }
       } catch (err) {
         console.error('Camera access error:', err);
-        alert('Unable to access camera. Please check permissions.');
+        alert('Camera permissions required. Please check your browser settings.');
       }
     }
 
@@ -120,21 +147,23 @@ function CameraContent() {
     };
   }, []);
 
-  const handleCapture = async (e) => {
+  const triggerPhotoCapture = async (e) => {
     if (e) {
-      e.preventDefault();
+      if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
     }
 
-    if (isCapturing || !cameraReady || !videoRef.current || !canvasRef.current) return;
+    if (isCapturing || !videoRef.current || !canvasRef.current) return;
 
     if (!lotNumber.trim()) {
-      alert('Please enter a Lot Number before taking photos.');
+      alert('Please enter a Lot Number first.');
       return;
     }
 
     setIsCapturing(true);
 
-    playShutterSound();
+    // Play Shutter Sound & Screen Flash
+    playSound();
     setFlashFeedback(true);
     setTimeout(() => setFlashFeedback(false), 120);
 
@@ -142,47 +171,48 @@ function CameraContent() {
       const video = videoRef.current;
       const canvas = canvasRef.current;
 
-      canvas.width = video.videoWidth || 1280;
-      canvas.height = video.videoHeight || 720;
+      const w = video.videoWidth || 1280;
+      const h = video.videoHeight || 720;
+
+      canvas.width = w;
+      canvas.height = h;
 
       const ctx = canvas.getContext('2d');
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, w, h);
 
       canvas.toBlob(
         async (blob) => {
-          if (!blob) {
-            setIsCapturing(false);
-            return;
+          if (blob) {
+            const dateStr = new Date().toISOString().split('T')[0];
+
+            await savePhotoToQueue({
+              lotNumber: lotNumber.trim().toUpperCase(),
+              dateStr: dateStr,
+              blob: blob,
+              createdAt: new Date().toISOString()
+            });
+
+            setPhotoCount((prev) => prev + 1);
           }
-
-          const dateStr = new Date().toISOString().split('T')[0];
-
-          await savePhotoToQueue({
-            lotNumber: lotNumber.trim().toUpperCase(),
-            dateStr: dateStr,
-            blob: blob,
-            createdAt: new Date().toISOString()
-          });
-
-          setPhotoCount((prev) => prev + 1);
           setIsCapturing(false);
         },
         'image/jpeg',
         0.85
       );
     } catch (err) {
-      console.error('Capture error:', err);
+      console.error('Capture failed:', err);
       setIsCapturing(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 h-[100dvh] w-screen bg-black text-white flex flex-col justify-between p-3 select-none font-sans overflow-hidden box-border">
+    <div className="fixed inset-0 h-[100dvh] w-full bg-black text-white flex flex-col justify-between p-3 select-none font-sans overflow-hidden box-border">
       <canvas ref={canvasRef} className="hidden" />
 
+      {/* Screen flash on picture take */}
       {flashFeedback && <div className="fixed inset-0 bg-white z-50 pointer-events-none opacity-80" />}
 
-      {/* Top Navigation Bar */}
+      {/* Header Bar */}
       <div className="h-12 px-1 flex justify-between items-center z-10 shrink-0">
         <button
           onClick={() => router.push(`/gallery`)}
@@ -207,14 +237,14 @@ function CameraContent() {
         </div>
       </div>
 
-      {/* Viewfinder Container (Constrained strictly inside remaining flex height) */}
-      <div className="flex-1 my-2 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0">
+      {/* Viewfinder - Strictly contained within the available viewport */}
+      <div className="flex-1 my-2 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0 w-full">
         <video
           ref={videoRef}
           playsInline
           muted
           autoPlay
-          className="w-full h-full object-cover max-h-full"
+          className="w-full h-full object-cover max-h-full pointer-events-none"
         />
 
         {!cameraReady && (
@@ -224,7 +254,7 @@ function CameraContent() {
         )}
       </div>
 
-      {/* Bottom Controls Bar */}
+      {/* Bottom Shutter Controls */}
       <div className="h-20 px-2 flex justify-around items-center z-10 shrink-0">
         <button
           onClick={() => router.push('/gallery')}
@@ -234,15 +264,19 @@ function CameraContent() {
           <span className="text-[8px] font-mono font-bold text-neutral-400">FOLDERS</span>
         </button>
 
-        {/* Shutter Button using onPointerDown for fast touch response */}
+        {/* Big Yellow Shutter Button with Direct Touch Event Handlers */}
         <button
-          onPointerDown={handleCapture}
-          disabled={!cameraReady || isCapturing}
-          className={`w-16 h-16 rounded-full border-4 border-white flex items-center justify-center p-1 touch-manipulation select-none active:scale-90 transition-transform ${
+          type="button"
+          onTouchStart={triggerPhotoCapture}
+          onClick={triggerPhotoCapture}
+          disabled={isCapturing}
+          className={`w-18 h-18 rounded-full border-4 border-white flex items-center justify-center p-1 active:scale-90 transition-transform touch-none ${
             isCapturing ? 'opacity-50 scale-95' : 'opacity-100'
           }`}
         >
-          <div className="w-full h-full rounded-full bg-yellow-400 active:bg-yellow-500 pointer-events-none" />
+          <div className="w-16 h-16 rounded-full bg-yellow-400 pointer-events-none flex items-center justify-center">
+            <div className="w-12 h-12 rounded-full border-2 border-black/20" />
+          </div>
         </button>
 
         <div className="w-12 h-12" />
