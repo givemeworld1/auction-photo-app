@@ -78,7 +78,7 @@ export default function GalleryPage() {
         setPhotos([...localPhotos, ...serverPhotos]);
       } catch (err) {
         console.error('Error loading gallery photos:', err);
-      } font-mono {
+      } finally {
         setLoading(false);
       }
     }
