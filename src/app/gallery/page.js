@@ -29,14 +29,24 @@ async function getAllLocalQueuePhotos() {
       const req = store.getAll();
       req.onsuccess = () => {
         const records = req.result || [];
-        const formatted = records.map((r) => ({
-          id: `local-${r.id}`,
-          lotNumber: r.lotNumber,
-          dateStr: r.dateStr,
-          cloudinaryUrl: URL.createObjectURL(r.blob),
-          blobSize: r.blob?.size || 0,
-          isLocal: true
-        }));
+        const formatted = records.map((r) => {
+          let previewUrl = '';
+          if (r.blob) {
+            previewUrl = URL.createObjectURL(r.blob);
+          } else if (r.dataUrl) {
+            previewUrl = r.dataUrl;
+          }
+
+          return {
+            id: `local-${r.id || Date.now()}`,
+            lotNumber: r.lotNumber,
+            dateStr: r.dateStr,
+            fullUrl: previewUrl,
+            thumbUrl: previewUrl,
+            blobSize: r.blob?.size || 0,
+            isLocal: true
+          };
+        });
         resolve(formatted);
       };
       req.onerror = () => resolve([]);
@@ -46,14 +56,23 @@ async function getAllLocalQueuePhotos() {
   }
 }
 
-// Convert Cloudinary URL to low-res lightweight thumbnail (~10-20KB max)
-function getLowResThumbnailUrl(url) {
-  if (!url) return '';
-  if (url.includes('res.cloudinary.com') && url.includes('/upload/')) {
-    // Inserts Cloudinary transformations for auto-format, quality low, width 300px
-    return url.replace('/upload/', '/upload/w_300,q_auto:eco,f_auto/');
+// Generate compressed low-res thumbnail URL (<20KB) vs full image URL
+function processPhotoUrls(photo) {
+  if (photo.isLocal) {
+    return {
+      thumbUrl: photo.thumbUrl || photo.previewUrl,
+      fullUrl: photo.fullUrl || photo.previewUrl
+    };
   }
-  return url;
+
+  const rawUrl = photo.cloudinaryUrl || photo.url || '';
+  if (rawUrl.includes('res.cloudinary.com') && rawUrl.includes('/upload/')) {
+    // w_250, q_auto:eco creates lightweight thumbnail (<20KB)
+    const thumbUrl = rawUrl.replace('/upload/', '/upload/w_250,q_auto:eco,f_auto/');
+    return { thumbUrl, fullUrl: rawUrl };
+  }
+
+  return { thumbUrl: rawUrl, fullUrl: rawUrl };
 }
 
 export default function GalleryPage() {
@@ -84,7 +103,12 @@ export default function GalleryPage() {
           console.warn('Server fetch error:', e);
         }
 
-        setPhotos([...localPhotos, ...serverPhotos]);
+        const combined = [...localPhotos, ...serverPhotos].map((photo) => {
+          const urls = processPhotoUrls(photo);
+          return { ...photo, ...urls };
+        });
+
+        setPhotos(combined);
       } catch (err) {
         console.error('Error loading gallery photos:', err);
       } finally {
@@ -119,8 +143,7 @@ export default function GalleryPage() {
     }
 
     setPhotos((prev) => prev.filter((p) => p !== photo));
-    
-    // Update active folder view
+
     if (selectedLot) {
       setSelectedLot((prev) => ({
         ...prev,
@@ -140,7 +163,7 @@ export default function GalleryPage() {
   };
 
   return (
-    <div className="fixed inset-0 bg-neutral-950 text-white flex flex-col justify-between p-4 select-none font-sans overflow-y-auto">
+    <div className="fixed inset-0 bg-neutral-950 text-white flex flex-col justify-between p-4 select-none font-sans overflow-hidden">
       
       {/* Navigation Header */}
       <div className="pt-2 pb-3 px-1 flex justify-between items-center border-b border-neutral-800/80">
@@ -162,7 +185,7 @@ export default function GalleryPage() {
             {selectedLot ? `LOT: ${selectedLot.lotNumber}` : 'DIRECTORY FOLDERS'}
           </h1>
           <p className="text-[10px] text-neutral-400 font-mono">
-            {selectedLot ? `${selectedLot.photos.length} THUMBNAILS (<20KB)` : 'DATE & LOT STRUCTURE'}
+            {selectedLot ? `${selectedLot.photos.length} THUMBNAILS` : 'FOLDERS BY DATE & LOT'}
           </p>
         </div>
 
@@ -178,18 +201,17 @@ export default function GalleryPage() {
         )}
       </div>
 
-      {/* Main Folder Directory OR Folder Content */}
+      {/* Main Container */}
       <div className="flex-1 my-3 overflow-y-auto">
         {loading ? (
           <div className="h-64 flex items-center justify-center text-xs font-mono text-neutral-500">
             Scanning folders...
           </div>
         ) : selectedLot ? (
-          /* STEP 2: INSIDE FOLDER -> Lightweight Small Thumbnails Grid */
+          /* INSIDE FOLDER -> STRICTLY LIGHTWEIGHT THUMBNAILS (<20KB) */
           <div className="grid grid-cols-3 gap-2 p-1">
             {selectedLot.photos.map((photo, index) => {
-              const thumbUrl = getLowResThumbnailUrl(photo.cloudinaryUrl || photo.url);
-              const estKB = photo.blobSize ? (photo.blobSize / 1024).toFixed(1) : '~15';
+              const estKB = photo.blobSize ? (photo.blobSize / 1024).toFixed(1) : '<20';
 
               return (
                 <div
@@ -197,26 +219,32 @@ export default function GalleryPage() {
                   onClick={(e) => handleOpenEditor(photo, e)}
                   className="relative bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden aspect-square cursor-pointer active:scale-95 transition-transform"
                 >
-                  {/* Thumbnail Image */}
-                  <img
-                    src={thumbUrl}
-                    alt="Thumbnail"
-                    loading="lazy"
-                    className="w-full h-full object-cover"
-                  />
+                  {photo.thumbUrl ? (
+                    <img
+                      src={photo.thumbUrl}
+                      alt="Thumbnail"
+                      loading="lazy"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-neutral-950 text-neutral-600 text-[10px] font-mono">
+                      No Preview
+                    </div>
+                  )}
 
-                  {/* Size & Sync Indicators */}
-                  <span className="absolute top-1 left-1 bg-black/75 backdrop-blur-md text-[8px] font-mono px-1.5 py-0.5 rounded text-neutral-300 border border-white/10">
+                  {/* Size Indicator */}
+                  <span className="absolute top-1 left-1 bg-black/80 backdrop-blur-md text-[8px] font-mono px-1.5 py-0.5 rounded text-neutral-300 border border-white/10">
                     {estKB} KB
                   </span>
 
+                  {/* Queue Tag */}
                   {photo.isLocal && (
-                    <span className="absolute bottom-1 left-1 bg-blue-600 text-white text-[7px] font-mono px-1 py-0.5 rounded font-bold">
-                      QUEUE
+                    <span className="absolute bottom-1 left-1 bg-amber-500 text-black text-[7px] font-mono px-1 py-0.5 rounded font-extrabold">
+                      QUEUED
                     </span>
                   )}
 
-                  {/* Delete Button */}
+                  {/* Delete Action */}
                   <button
                     onClick={(e) => handleDeletePhoto(photo, e)}
                     className="absolute top-1 right-1 w-5 h-5 rounded bg-red-600/90 text-white text-[10px] font-bold flex items-center justify-center backdrop-blur-md"
@@ -228,11 +256,11 @@ export default function GalleryPage() {
             })}
           </div>
         ) : (
-          /* STEP 1: MAIN GALLERY -> Folders grouped by Date and Lot */
+          /* MAIN DIRECTORY -> Folders Only (No Image Previews) */
           <div className="space-y-5">
             {Object.keys(groupedGallery).length === 0 ? (
               <div className="h-64 flex flex-col items-center justify-center text-center p-6">
-                <span className="text-3xl mb-2">📁</span>
+                <span className="text-4xl mb-2">📁</span>
                 <p className="text-sm font-bold text-neutral-300">No Folders Created</p>
                 <p className="text-xs text-neutral-500 mt-1">Capture photos to generate Lot folders automatically.</p>
               </div>
@@ -247,36 +275,33 @@ export default function GalleryPage() {
 
                   <div className="grid grid-cols-2 gap-3">
                     {Object.entries(lotGroup).map(([lotNum, folderPhotos]) => {
-                      const coverThumb = getLowResThumbnailUrl(folderPhotos[0]?.cloudinaryUrl || folderPhotos[0]?.url);
+                      const queuedCount = folderPhotos.filter((p) => p.isLocal).length;
 
                       return (
                         <div
                           key={lotNum}
                           onClick={() => setSelectedLot({ lotNumber: lotNum, photos: folderPhotos })}
-                          className="bg-neutral-900 border border-neutral-800 rounded-xl p-2.5 flex flex-col justify-between hover:border-neutral-700 active:scale-98 transition-all cursor-pointer"
+                          className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 flex flex-col justify-between hover:border-neutral-700 active:scale-98 transition-all cursor-pointer"
                         >
-                          <div className="w-full h-20 bg-neutral-950 rounded-lg overflow-hidden mb-2 relative">
-                            {coverThumb ? (
-                              <img
-                                src={coverThumb}
-                                alt="Folder Cover"
-                                loading="lazy"
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-neutral-700 text-lg">
-                                📁
-                              </div>
-                            )}
-                            <span className="absolute top-1.5 right-1.5 bg-black/80 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] font-mono font-bold text-white">
-                              {folderPhotos.length} items
+                          {/* Folder Card Graphic (No Image Previews) */}
+                          <div className="w-full h-20 bg-neutral-950/80 rounded-lg border border-neutral-800/80 flex flex-col items-center justify-center mb-2 relative">
+                            <span className="text-3xl">📁</span>
+
+                            <span className="absolute top-1.5 right-1.5 bg-neutral-800 border border-neutral-700 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold text-neutral-200">
+                              {folderPhotos.length} {folderPhotos.length === 1 ? 'item' : 'items'}
                             </span>
+
+                            {queuedCount > 0 && (
+                              <span className="absolute bottom-1.5 left-1.5 bg-amber-500/20 border border-amber-500/40 text-amber-400 px-1.5 py-0.5 rounded text-[8px] font-mono font-bold">
+                                ⏳ {queuedCount} queued
+                              </span>
+                            )}
                           </div>
 
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between px-0.5">
                             <div>
                               <p className="text-xs font-bold text-white font-mono">LOT {lotNum}</p>
-                              <p className="text-[9px] text-neutral-400">Open folder →</p>
+                              <p className="text-[9px] text-neutral-400">Tap to open →</p>
                             </div>
                           </div>
                         </div>
@@ -290,17 +315,20 @@ export default function GalleryPage() {
         )}
       </div>
 
-      {/* Editor / Full View Modal (Opens when tapping thumbnail) */}
+      {/* FULL PICTURE OVERLAY (STRICTLY FITS WITHIN SCREEN SIZE) */}
       {activePhoto && (
-        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between p-4">
+        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between p-4 h-screen w-screen overflow-hidden">
+          {/* Header */}
           <div className="flex justify-between items-center pt-2">
             <button
               onClick={() => setActivePhoto(null)}
-              className="w-8 h-8 rounded-full bg-neutral-900 text-white flex items-center justify-center text-xs font-bold"
+              className="w-8 h-8 rounded-full bg-neutral-900 border border-neutral-800 text-white flex items-center justify-center text-xs font-bold"
             >
               ✕
             </button>
-            <h2 className="text-xs font-bold font-mono text-yellow-400">INSPECT & EDIT</h2>
+            <h2 className="text-xs font-bold font-mono text-yellow-400">
+              LOT {activePhoto.lotNumber || 'PHOTO'}
+            </h2>
             <button
               onClick={() => setActivePhoto(null)}
               className="px-3 py-1 rounded-full bg-yellow-400 text-black text-xs font-extrabold"
@@ -309,24 +337,26 @@ export default function GalleryPage() {
             </button>
           </div>
 
-          <div className="flex-1 my-4 flex items-center justify-center overflow-hidden">
+          {/* Full Picture View (Constrained to screen dimensions) */}
+          <div className="flex-1 my-2 flex items-center justify-center overflow-hidden relative">
             <img
-              src={activePhoto.cloudinaryUrl || activePhoto.url}
-              alt="Full Preview"
+              src={activePhoto.fullUrl}
+              alt="Full View"
               style={{
                 filter: `brightness(${brightness}%) contrast(${contrast}%)`,
                 transform: `rotate(${rotation}deg)`
               }}
-              className="max-h-full max-w-full object-contain rounded-lg"
+              className="max-h-[72vh] max-w-full object-contain rounded-lg transition-transform duration-200"
             />
           </div>
 
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 space-y-2">
+          {/* Control Panel */}
+          <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 space-y-2 mb-1">
             <div className="flex justify-between items-center">
-              <span className="text-[11px] font-bold text-neutral-400">Rotate</span>
+              <span className="text-[11px] font-bold text-neutral-400">Rotate Canvas</span>
               <button
                 onClick={() => setRotation((prev) => (prev + 90) % 360)}
-                className="py-1 px-3 rounded-lg bg-neutral-800 text-xs font-bold text-white border border-neutral-700"
+                className="py-1 px-3 rounded-lg bg-neutral-800 text-xs font-bold text-white border border-neutral-700 active:scale-95"
               >
                 🔄 90°
               </button>
@@ -334,7 +364,7 @@ export default function GalleryPage() {
 
             <div className="space-y-1">
               <div className="flex justify-between text-[10px] text-neutral-400 font-bold">
-                <span>Brightness</span>
+                <span>Brightness Adjust</span>
                 <span>{brightness}%</span>
               </div>
               <input
@@ -342,8 +372,8 @@ export default function GalleryPage() {
                 min="50"
                 max="150"
                 value={brightness}
-                onChange={(e) => setBrightness(e.target.value)}
-                className="w-full accent-yellow-400"
+                onChange={(e) => setBrightness(Number(e.target.value))}
+                className="w-full accent-yellow-400 cursor-pointer"
               />
             </div>
           </div>
