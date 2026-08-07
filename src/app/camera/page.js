@@ -1,9 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef, Suspense } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
+import { useState, useEffect, useRef } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 
-// --- IndexedDB Local Queue Storage Engine ---
 const DB_NAME = 'AutoCamDB';
 const STORE_NAME = 'photoQueue';
 
@@ -21,297 +20,242 @@ function openDB() {
   });
 }
 
-async function savePhotoToQueue(lotNumber, blob) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    const record = {
-      lotNumber,
-      blob,
-      timestamp: new Date().toISOString(),
-      dateStr: new Date().toISOString().split('T')[0]
-    };
-    const req = store.add(record);
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+async function savePhotoToQueue(photoData) {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.add(photoData);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.error('Queue save error:', e);
+  }
 }
 
-async function getNextQueueItem() {
-  const db = await openDB();
-  return new Promise((resolve) => {
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const store = tx.objectStore(STORE_NAME);
-    const req = store.openCursor();
-    req.onsuccess = (e) => {
-      const cursor = e.target.result;
-      if (cursor) {
-        resolve({ id: cursor.key, ...cursor.value });
-      } else {
-        resolve(null);
-      }
-    };
-  });
-}
-
-async function removeQueueItem(id) {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    const store = tx.objectStore(STORE_NAME);
-    const req = store.delete(id);
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-// --- Main Camera Component ---
-function CameraContent() {
-  const searchParams = useSearchParams();
+export default function CameraPage() {
   const router = useRouter();
-  const lotNumber = searchParams.get('lot') || 'UNNAMED-LOT';
+  const searchParams = useSearchParams();
+
+  const [lotNumber, setLotNumber] = useState('');
+  const [photoCount, setPhotoCount] = useState(0);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [flashFeedback, setFlashFeedback] = useState(false);
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
+  const audioCtxRef = useRef(null);
 
-  const [queueCount, setQueueCount] = useState(0);
-  const [sessionCount, setSessionCount] = useState(0);
-  const [flashFeedback, setFlashFeedback] = useState(false);
-  const [activeZoom, setActiveZoom] = useState(1);
-
-  // Read saved presets from localStorage
-  const presetZoom = parseFloat(
-    typeof window !== 'undefined' ? localStorage.getItem('camera_preset_zoom') || '1' : '1'
-  );
-  const presetFlash =
-    typeof window !== 'undefined' ? localStorage.getItem('camera_preset_flash') || 'off' : 'off';
-
-  // 1. Initialize Camera Stream & Apply Presets
   useEffect(() => {
-    let activeStream = null;
+    const lot = searchParams.get('lot');
+    if (lot) setLotNumber(lot);
+  }, [searchParams]);
+
+  // Web Audio API Shutter Click Sound Generator
+  const playShutterSound = () => {
+    try {
+      if (!audioCtxRef.current) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtxRef.current = new AudioContext();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const now = ctx.currentTime;
+
+      // Click noise pulse
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, now);
+      osc.frequency.exponentialRampToValueAtTime(120, now + 0.08);
+
+      gain.gain.setValueAtTime(0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.08);
+    } catch (e) {
+      console.warn('Audio playback error:', e);
+    }
+  };
+
+  // Camera initialization
+  useEffect(() => {
+    let stream = null;
 
     async function initCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        stream = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
           },
           audio: false
         });
 
-        activeStream = stream;
-
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch((e) => console.log('Play error:', e));
-        }
-
-        // Apply hardware constraints after stream starts playing
-        const track = stream.getVideoTracks()[0];
-        if (track && track.getCapabilities) {
-          const capabilities = track.getCapabilities();
-          const constraints = {};
-
-          if (capabilities.torch && (presetFlash === 'on' || presetFlash === 'auto')) {
-            constraints.torch = true;
-          }
-
-          if (capabilities.zoom) {
-            const minZ = capabilities.zoom.min || 1;
-            const maxZ = capabilities.zoom.max || 1;
-            const targetZoom = Math.max(minZ, Math.min(maxZ, presetZoom));
-            constraints.zoom = targetZoom;
-            setActiveZoom(targetZoom);
-          }
-
-          if (Object.keys(constraints).length > 0) {
-            await track.applyConstraints({ advanced: [constraints] }).catch((err) => {
-              console.warn('Constraint application deferred:', err);
-            });
-          }
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current.play();
+            setCameraReady(true);
+          };
         }
       } catch (err) {
-        console.error('Camera Init Error:', err);
+        console.error('Camera access error:', err);
+        alert('Unable to access camera. Please check permissions.');
       }
     }
 
     initCamera();
 
     return () => {
-      if (activeStream) {
-        activeStream.getTracks().forEach((track) => track.stop());
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
       }
     };
-  }, [presetZoom, presetFlash]);
-
-  // 2. Background Queue Upload Processor
-  useEffect(() => {
-    let isUploading = false;
-
-    const interval = setInterval(async () => {
-      if (isUploading) return;
-
-      const item = await getNextQueueItem();
-      if (!item) return;
-
-      isUploading = true;
-
-      try {
-        const formData = new FormData();
-        formData.append('file', item.blob);
-        formData.append('upload_preset', 'ml_default');
-
-        const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || 'db744xrg';
-        const cloudRes = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-          method: 'POST',
-          body: formData
-        });
-
-        const cloudData = await cloudRes.json();
-
-        if (cloudData.secure_url) {
-          await fetch('/api/photos/upload', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              lotNumber: item.lotNumber,
-              dateStr: item.dateStr,
-              cloudinaryUrl: cloudData.secure_url,
-              publicId: cloudData.public_id
-            })
-          });
-
-          await removeQueueItem(item.id);
-          setQueueCount((prev) => Math.max(0, prev - 1));
-        }
-      } catch (err) {
-        console.error('Background upload error:', err);
-      } finally {
-        isUploading = false;
-      }
-    }, 1000);
-
-    return () => clearInterval(interval);
   }, []);
 
-  // 3. Instant Touch Capture
-  const handleTriggerShoot = async (e) => {
+  const handleCapture = async (e) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
 
-    if (!videoRef.current) return;
-    const video = videoRef.current;
-    if (video.readyState < 2) return;
+    if (isCapturing || !cameraReady || !videoRef.current || !canvasRef.current) return;
 
-    // Trigger visual shutter feedback + device vibration
-    if (typeof navigator !== 'undefined' && navigator.vibrate) {
-      navigator.vibrate(35);
+    if (!lotNumber.trim()) {
+      alert('Please enter a Lot Number before taking photos.');
+      return;
     }
+
+    setIsCapturing(true);
+
+    // Audio & Visual feedback
+    playShutterSound();
     setFlashFeedback(true);
-    setTimeout(() => setFlashFeedback(false), 70);
+    setTimeout(() => setFlashFeedback(false), 150);
 
-    const canvas = canvasRef.current || document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
 
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.width = video.videoWidth || 1280;
+      canvas.height = video.videoHeight || 720;
 
-    canvas.toBlob(
-      async (blob) => {
-        if (!blob) return;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        await savePhotoToQueue(lotNumber, blob);
-        setSessionCount((prev) => prev + 1);
-        setQueueCount((prev) => prev + 1);
-      },
-      'image/webp',
-      0.8
-    );
+      canvas.toBlob(
+        async (blob) => {
+          if (!blob) {
+            setIsCapturing(false);
+            return;
+          }
+
+          const dateStr = new Date().toISOString().split('T')[0];
+
+          await savePhotoToQueue({
+            lotNumber: lotNumber.trim().toUpperCase(),
+            dateStr: dateStr,
+            blob: blob,
+            createdAt: new Date().toISOString()
+          });
+
+          setPhotoCount((prev) => prev + 1);
+          setIsCapturing(false);
+        },
+        'image/jpeg',
+        0.85
+      );
+    } catch (err) {
+      console.error('Capture failed:', err);
+      setIsCapturing(false);
+    }
   };
 
   return (
-    <div
-      className="fixed inset-0 w-full bg-black select-none overflow-hidden"
-      style={{ height: '100dvh', maxHeight: '-webkit-fill-available' }}
-    >
+    <div className="fixed inset-0 bg-black text-white flex flex-col justify-between p-4 select-none font-sans overflow-hidden">
+      {/* Hidden processing canvas */}
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Visual Shutter Feedback Flash */}
-      {flashFeedback && <div className="absolute inset-0 z-50 bg-white opacity-80 pointer-events-none" />}
+      {/* Screen flash feedback */}
+      {flashFeedback && <div className="fixed inset-0 bg-white z-50 pointer-events-none opacity-80" />}
 
-      {/* Fullscreen Video Stream */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-        className="pointer-events-none"
-      />
+      {/* Top Bar */}
+      <div className="pt-2 pb-3 px-1 flex justify-between items-center z-10 bg-gradient-to-b from-black/80 to-transparent">
+        <button
+          onClick={() => router.push(`/gallery`)}
+          className="w-10 h-10 rounded-full bg-neutral-900/90 border border-neutral-700 flex items-center justify-center text-sm font-bold active:scale-95"
+        >
+          ✕
+        </button>
 
-      {/* Transparent Active Touch Overlay Button (Captures all touches) */}
-      <button
-        type="button"
-        onTouchStart={handleTriggerShoot}
-        onClick={handleTriggerShoot}
-        className="absolute inset-0 z-20 w-full h-full bg-transparent border-0 cursor-pointer outline-none active:bg-white/5"
-      />
+        <div className="flex-1 max-w-[200px] mx-3">
+          <input
+            type="text"
+            value={lotNumber}
+            onChange={(e) => setLotNumber(e.target.value.toUpperCase())}
+            placeholder="ENTER LOT #"
+            className="w-full bg-neutral-900/90 border border-yellow-500/50 rounded-lg px-3 py-1.5 text-center text-xs font-mono font-bold uppercase tracking-wider text-yellow-400 placeholder:text-neutral-500 focus:outline-none focus:border-yellow-400"
+          />
+        </div>
 
-      {/* Top Lot Badge & Preset Readout */}
-      <div className="absolute top-4 left-4 z-30 pointer-events-none flex items-center gap-2 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10">
-        <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
-        <span className="font-mono text-xs font-extrabold text-yellow-400">LOT: {lotNumber}</span>
-        <span className="font-mono text-[10px] text-neutral-400 border-l border-neutral-700 pl-2">
-          {activeZoom}x
-        </span>
+        <div className="bg-neutral-900/90 border border-neutral-700 rounded-full px-3 py-1 flex items-center gap-1">
+          <span className="text-[10px] text-neutral-400 font-mono">COUNT:</span>
+          <span className="text-xs font-bold text-yellow-400 font-mono">{photoCount}</span>
+        </div>
       </div>
 
-      {/* Exit Button */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          router.push('/');
-        }}
-        onTouchStart={(e) => {
-          e.stopPropagation();
-          router.push('/');
-        }}
-        className="absolute top-4 right-4 z-40 w-10 h-10 rounded-full bg-black/70 border border-white/20 flex items-center justify-center text-white text-sm font-bold active:scale-90"
-      >
-        ✕
-      </button>
+      {/* Camera Viewfinder */}
+      <div className="flex-1 relative my-2 bg-neutral-950 rounded-2xl overflow-hidden border border-neutral-800 flex items-center justify-center">
+        <video
+          ref={videoRef}
+          playsInline
+          muted
+          autoPlay
+          className="w-full h-full object-cover"
+        />
 
-      {/* Bottom Status Counter */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center gap-3 bg-black/70 backdrop-blur-md px-4 py-2 rounded-full border border-white/15">
-        <span className="text-[11px] font-mono font-extrabold text-white">
-          SHOTS: <span className="text-yellow-400">{sessionCount}</span>
-        </span>
-        <span className="text-neutral-600">|</span>
-        <span className="text-[11px] font-mono font-bold text-neutral-300">
-          UPLOADING: <span className="text-blue-400">{queueCount}</span>
-        </span>
+        {!cameraReady && (
+          <div className="absolute inset-0 flex items-center justify-center bg-neutral-950 text-neutral-500 text-xs font-mono">
+            Starting Camera...
+          </div>
+        )}
+      </div>
+
+      {/* Bottom Controls Bar */}
+      <div className="py-4 px-2 flex justify-around items-center z-10 bg-gradient-to-t from-black/80 to-transparent">
+        <button
+          onClick={() => router.push('/gallery')}
+          className="w-12 h-12 rounded-xl bg-neutral-900 border border-neutral-800 flex flex-col items-center justify-center active:scale-95"
+        >
+          <span className="text-lg">📁</span>
+          <span className="text-[8px] font-mono font-bold text-neutral-400">FOLDERS</span>
+        </button>
+
+        {/* Shutter Button with touch + click handlers */}
+        <button
+          onClick={handleCapture}
+          onTouchStart={handleCapture}
+          disabled={!cameraReady || isCapturing}
+          className={`w-20 h-20 rounded-full border-4 border-white flex items-center justify-center p-1 active:scale-90 transition-transform ${
+            isCapturing ? 'opacity-50 scale-95' : 'opacity-100'
+          }`}
+        >
+          <div className="w-full h-full rounded-full bg-yellow-400 active:bg-yellow-500" />
+        </button>
+
+        <div className="w-12 h-12" />
       </div>
     </div>
-  );
-}
-
-export default function CameraPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-black text-white flex items-center justify-center font-mono text-sm">
-          Loading camera...
-        </div>
-      }
-    >
-      <CameraContent />
-    </Suspense>
   );
 }
