@@ -103,7 +103,7 @@ function CameraContent() {
         audioRef.current.play().catch(() => {});
       }
     } catch (e) {
-      // Ignore audio block to prevent stopping capture execution
+      // Ignore audio failure to keep photo saving operational
     }
   };
 
@@ -201,7 +201,7 @@ function CameraContent() {
   };
 
   return (
-    <div className="fixed inset-0 h-[100dvh] w-full bg-black text-white flex flex-col justify-between p-3 select-none font-sans overflow-hidden box-border">
+    <div className="fixed inset-0 w-screen h-screen bg-black text-white flex flex-col justify-between p-2 select-none font-sans overflow-hidden box-border">
       <canvas ref={canvasRef} className="hidden" />
 
       {/* Screen flash feedback */}
@@ -241,15 +241,16 @@ function CameraContent() {
         </button>
       </div>
 
-      {/* Entire Camera Viewfinder acts as the touch shutter button */}
+      {/* Viewfinder: Inline native capture with zero full-screen previews */}
       <div
         onTouchStart={triggerPhotoCapture}
         onClick={triggerPhotoCapture}
-        className="flex-1 my-2 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0 w-full cursor-pointer touch-none active:opacity-90"
+        className="flex-1 my-1 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0 w-full cursor-pointer touch-none active:opacity-90"
       >
         <video
           ref={videoRef}
           playsInline
+          webkit-playsinline="true"
           muted
           autoPlay
           className="w-full h-full object-cover max-h-full pointer-events-none"
@@ -271,7 +272,7 @@ function CameraContent() {
 
 export default function CameraPage() {
   return (
-    <Suspense fallback={<div className="fixed inset-0 h-[100dvh] bg-black text-white flex items-center justify-center text-xs font-mono">Loading Camera...</div>}>
+    <Suspense fallback={<div className="fixed inset-0 w-screen h-screen bg-black text-white flex items-center justify-center text-xs font-mono">Loading Camera...</div>}>
       <CameraContent />
     </Suspense>
   );
