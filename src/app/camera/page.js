@@ -35,45 +35,32 @@ async function savePhotoToQueue(photoData) {
   }
 }
 
-// Memory-synthesized shutter sound WAV blob
-function createShutterAudio() {
-  if (typeof window === 'undefined') return null;
+// Low-latency Web Audio Synthesizer (Bypasses external file loading)
+function playShutterBeep() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    if (ctx.state === 'suspended') ctx.resume();
 
-  const sampleRate = 8000;
-  const numSamples = sampleRate * 0.08;
-  const buffer = new ArrayBuffer(44 + numSamples);
-  const view = new DataView(buffer);
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
 
-  const writeString = (offset, string) => {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i));
-    }
-  };
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1200, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 0.05);
 
-  writeString(0, 'RIFF');
-  view.setUint32(4, 36 + numSamples, true);
-  writeString(8, 'WAVE');
-  writeString(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate, true);
-  view.setUint16(32, 1, true);
-  view.setUint16(34, 8, true);
-  writeString(36, 'data');
-  view.setUint32(40, numSamples, true);
+    gain.gain.setValueAtTime(0.5, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
 
-  for (let i = 0; i < numSamples; i++) {
-    const decay = 1 - i / numSamples;
-    const sample = Math.sin(i * 0.4) * decay * 127 + 128;
-    view.setUint8(44 + i, sample);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.05);
+  } catch (e) {
+    // Silently continue if audio fails on restricted devices
   }
-
-  const blob = new Blob([buffer], { type: 'audio/wav' });
-  const audio = new Audio(URL.createObjectURL(blob));
-  audio.volume = 1.0;
-  return audio;
 }
 
 function CameraContent() {
@@ -88,25 +75,28 @@ function CameraContent() {
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-  const audioRef = useRef(null);
 
   useEffect(() => {
     const lot = searchParams.get('lot');
     if (lot) setLotNumber(lot);
-    audioRef.current = createShutterAudio();
   }, [searchParams]);
 
-  const playSound = () => {
-    try {
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.play().catch(() => {});
-      }
-    } catch (e) {
-      // Fallback silently if browser audio fails
-    }
-  };
+  // Lock document scroll on mount
+  useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    document.body.style.position = 'fixed';
+    document.body.style.width = '100%';
+    document.body.style.height = '100%';
 
+    return () => {
+      document.body.style.overflow = '';
+      document.body.style.position = '';
+      document.body.style.width = '';
+      document.body.style.height = '';
+    };
+  }, []);
+
+  // Initialize Camera Stream
   useEffect(() => {
     let stream = null;
 
@@ -129,8 +119,8 @@ function CameraContent() {
           };
         }
       } catch (err) {
-        console.error('Camera access error:', err);
-        alert('Camera permissions required. Please check browser settings.');
+        console.error('Camera initialization error:', err);
+        alert('Camera access denied or unreadable. Check browser permissions.');
       }
     }
 
@@ -145,7 +135,7 @@ function CameraContent() {
 
   const triggerPhotoCapture = async (e) => {
     if (e) {
-      if (e.cancelable) e.preventDefault();
+      e.preventDefault();
       e.stopPropagation();
     }
 
@@ -158,9 +148,9 @@ function CameraContent() {
 
     setIsCapturing(true);
 
-    playSound();
+    playShutterBeep();
     setFlashFeedback(true);
-    setTimeout(() => setFlashFeedback(false), 120);
+    setTimeout(() => setFlashFeedback(false), 100);
 
     try {
       const video = videoRef.current;
@@ -195,31 +185,29 @@ function CameraContent() {
         0.85
       );
     } catch (err) {
-      console.error('Capture failed:', err);
+      console.error('Capture execution failed:', err);
       setIsCapturing(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 top-0 left-0 right-0 bottom-0 w-full h-full bg-black text-white flex flex-col justify-between p-2 select-none font-sans overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-black text-white flex flex-col justify-between p-2 select-none font-sans overflow-hidden box-border touch-none">
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Visual Flash Effect */}
+      {/* Screen flash feedback */}
       {flashFeedback && <div className="fixed inset-0 bg-white z-50 pointer-events-none opacity-80" />}
 
-      {/* Header Bar */}
-      <div className="h-12 px-1 flex justify-between items-center z-20 shrink-0">
+      {/* Top Header Bar */}
+      <div className="h-12 px-1 flex justify-between items-center z-30 shrink-0">
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            router.push('/gallery');
-          }}
-          className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center text-sm font-bold active:scale-95 z-30"
+          type="button"
+          onClick={() => router.push('/gallery')}
+          className="w-10 h-10 rounded-full bg-neutral-900 border border-neutral-800 flex items-center justify-center text-sm font-bold active:scale-95"
         >
           ✕
         </button>
 
-        <div className="flex-1 max-w-[180px] mx-2 z-30" onClick={(e) => e.stopPropagation()}>
+        <div className="flex-1 max-w-[180px] mx-2">
           <input
             type="text"
             value={lotNumber}
@@ -230,51 +218,48 @@ function CameraContent() {
         </div>
 
         <button
-          onClick={(e) => {
-            e.stopPropagation();
-            router.push('/gallery');
-          }}
-          className="bg-neutral-900 border border-neutral-800 rounded-full px-3 py-1.5 flex items-center gap-1 active:scale-95 z-30"
+          type="button"
+          onClick={() => router.push('/gallery')}
+          className="bg-neutral-900 border border-neutral-800 rounded-full px-3 py-1.5 flex items-center gap-1 active:scale-95"
         >
           <span className="text-[10px] text-neutral-400 font-mono">COUNT:</span>
           <span className="text-xs font-bold text-yellow-400 font-mono">{photoCount}</span>
         </button>
       </div>
 
-      {/* Main Viewfinder Container */}
-      <div className="flex-1 my-1 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0 w-full">
-        {/* Live Video Feed */}
+      {/* Viewfinder Button Container (Screen Area) */}
+      <button
+        type="button"
+        onClick={triggerPhotoCapture}
+        style={{ touchAction: 'none' }}
+        className="flex-1 my-1 relative bg-neutral-950 rounded-xl overflow-hidden border border-neutral-800 flex items-center justify-center min-h-0 w-full p-0 cursor-pointer outline-none active:opacity-90"
+      >
         <video
           ref={videoRef}
           playsInline
           muted
           autoPlay
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none"
-        />
-
-        {/* Transparent Touch Overlay: Captures screen taps and blocks mobile video full-screen triggers */}
-        <div
-          onPointerDown={triggerPhotoCapture}
-          className="absolute inset-0 z-10 w-full h-full cursor-pointer touch-none bg-transparent"
+          disablePictureInPicture
+          className="w-full h-full object-cover max-h-full pointer-events-none select-none"
         />
 
         {!cameraReady ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-neutral-950 text-neutral-500 text-xs font-mono z-0">
+          <div className="absolute inset-0 flex items-center justify-center bg-neutral-950 text-neutral-500 text-xs font-mono pointer-events-none">
             Starting Camera...
           </div>
         ) : (
-          <div className="absolute bottom-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-mono text-neutral-300 pointer-events-none border border-white/10 z-20">
+          <div className="absolute bottom-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-[10px] font-mono text-neutral-300 pointer-events-none border border-white/10">
             TAP SCREEN TO TAKE PHOTO
           </div>
         )}
-      </div>
+      </button>
     </div>
   );
 }
 
 export default function CameraPage() {
   return (
-    <Suspense fallback={<div className="fixed inset-0 w-full h-full bg-black text-white flex items-center justify-center text-xs font-mono">Loading Camera...</div>}>
+    <Suspense fallback={<div className="fixed inset-0 bg-black text-white flex items-center justify-center text-xs font-mono">Loading Camera...</div>}>
       <CameraContent />
     </Suspense>
   );
