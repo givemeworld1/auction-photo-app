@@ -1,44 +1,104 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import mongoose from 'mongoose';
 
-export async function POST(request) {
+// --- MongoDB Schema & Model Initialization ---
+const photoSchema = new mongoose.Schema(
+  {
+    lotNumber: { type: String, required: true, index: true },
+    dateStr: { type: String, required: true, index: true },
+    cloudinaryUrl: { type: String, required: true },
+    publicId: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now }
+  },
+  { timestamps: true }
+);
+
+// Prevent re-compiling model during Next.js Hot Module Replacement (HMR)
+const Photo = mongoose.models.Photo || mongoose.model('Photo', photoSchema);
+
+async function connectToDatabase() {
+  if (mongoose.connection.readyState >= 1) return;
+  const mongoUri = process.env.MONGODB_URI;
+  if (!mongoUri) {
+    throw new Error('Please define the MONGODB_URI environment variable in .env.local');
+  }
+  return mongoose.connect(mongoUri);
+}
+
+// --- POST Handler: Save Uploaded Photo Record ---
+export async function POST(req) {
   try {
-    const { lotNumber, cloudinaryUrl, publicId } = await request.json();
+    const body = await req.json();
+    const { lotNumber, dateStr, cloudinaryUrl, publicId } = body;
 
-    if (!lotNumber || !cloudinaryUrl) {
-      return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
-    }
-
-    // 1. Find or create folder for this lot number
-    let folderRes = await query(
-      'SELECT id FROM folders WHERE lot_number = $1 LIMIT 1',
-      [lotNumber]
-    );
-
-    let folderId;
-    if (folderRes.rows.length === 0) {
-      const newFolder = await query(
-        'INSERT INTO folders (lot_number) VALUES ($1) RETURNING id',
-        [lotNumber]
+    // Validation
+    if (!cloudinaryUrl || !publicId) {
+      return NextResponse.json(
+        { error: 'Missing required image parameters (cloudinaryUrl or publicId)' },
+        { status: 400 }
       );
-      folderId = newFolder.rows[0].id;
-    } else {
-      folderId = folderRes.rows[0].id;
     }
 
-    // 2. Insert photo record connected to folder
-    const photoRes = await query(
-      'INSERT INTO photos (folder_id, cloudinary_url, public_id) VALUES ($1, $2, $3) RETURNING id',
-      [folderId, cloudinaryUrl, publicId || '']
-    );
+    await connectToDatabase();
 
-    return NextResponse.json({
-      success: true,
-      photoId: photoRes.rows[0].id,
-      folderId: folderId
+    // Fallback date to today's date (YYYY-MM-DD) if dateStr isn't supplied
+    const formattedDate = dateStr || new Date().toISOString().split('T')[0];
+    const formattedLot = lotNumber ? lotNumber.trim().toUpperCase() : 'UNNAMED-LOT';
+
+    const newPhoto = await Photo.create({
+      lotNumber: formattedLot,
+      dateStr: formattedDate,
+      cloudinaryUrl,
+      publicId,
+      createdAt: new Date()
     });
+
+    return NextResponse.json({ success: true, photo: newPhoto }, { status: 201 });
   } catch (error) {
-    console.error('Photo upload DB error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error('API Photo Upload Handler Error:', error);
+    return NextResponse.json(
+      { error: 'Failed to save photo record to database', details: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// --- GET Handler: Fetch All Photos for Gallery Directory ---
+export async function GET() {
+  try {
+    await connectToDatabase();
+
+    const photos = await Photo.find({}).sort({ createdAt: -1 }).lean();
+
+    return NextResponse.json(photos, { status: 200 });
+  } catch (error) {
+    console.error('API Photo Fetch Error:', error);
+    return NextResponse.json(
+      { error: 'Failed to retrieve photos', details: error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// --- DELETE Handler: Remove Photo from DB ---
+export async function DELETE(req) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const photoId = searchParams.get('id');
+
+    if (!photoId) {
+      return NextResponse.json({ error: 'Photo ID required' }, { status: 400 });
+    }
+
+    await connectToDatabase();
+    await Photo.findByIdAndDelete(photoId);
+
+    return NextResponse.json({ success: true, deletedId: photoId }, { status: 200 });
+  } catch (error) {
+    console.error('API Photo Delete Error:', error);
+    return NextResponse.json(
+      { error: 'Failed to delete photo', details: error.message },
+      { status: 500 }
+    );
   }
 }
