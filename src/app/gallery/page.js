@@ -38,7 +38,8 @@ async function getAllLocalQueuePhotos() {
           }
 
           return {
-            id: `local-${r.id || Date.now()}`,
+            id: r.id,
+            rawId: r.id,
             lotNumber: r.lotNumber,
             dateStr: r.dateStr,
             fullUrl: previewUrl,
@@ -56,7 +57,22 @@ async function getAllLocalQueuePhotos() {
   }
 }
 
-// Generate compressed low-res thumbnail URL (<20KB) vs full image URL
+async function deleteLocalQueuePhoto(id) {
+  try {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.delete(id);
+      req.onsuccess = () => resolve(true);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    console.error('IndexedDB delete error:', e);
+    return false;
+  }
+}
+
 function processPhotoUrls(photo) {
   if (photo.isLocal) {
     return {
@@ -67,7 +83,6 @@ function processPhotoUrls(photo) {
 
   const rawUrl = photo.cloudinaryUrl || photo.url || '';
   if (rawUrl.includes('res.cloudinary.com') && rawUrl.includes('/upload/')) {
-    // w_250, q_auto:eco creates lightweight thumbnail (<20KB)
     const thumbUrl = rawUrl.replace('/upload/', '/upload/w_250,q_auto:eco,f_auto/');
     return { thumbUrl, fullUrl: rawUrl };
   }
@@ -118,7 +133,6 @@ export default function GalleryPage() {
     fetchGalleryData();
   }, []);
 
-  // Group photos by Date -> Lot Number
   const groupedGallery = photos.reduce((acc, photo) => {
     const dateKey = photo.dateStr || photo.createdAt?.split('T')[0] || new Date().toISOString().split('T')[0];
     const lotKey = photo.lotNumber || 'UNNAMED-LOT';
@@ -132,13 +146,17 @@ export default function GalleryPage() {
 
   const handleDeletePhoto = async (photo, e) => {
     if (e) e.stopPropagation();
-    if (!confirm('Delete photo?')) return;
+    if (!confirm('Delete photo permanently?')) return;
 
-    if (!photo.isLocal && (photo._id || photo.id)) {
+    if (photo.isLocal) {
+      if (photo.rawId !== undefined) {
+        await deleteLocalQueuePhoto(photo.rawId);
+      }
+    } else if (photo._id || photo.id) {
       try {
         await fetch(`/api/photos/upload?id=${photo._id || photo.id}`, { method: 'DELETE' });
       } catch (err) {
-        console.error('Delete error:', err);
+        console.error('Server delete error:', err);
       }
     }
 
@@ -208,8 +226,8 @@ export default function GalleryPage() {
             Scanning folders...
           </div>
         ) : selectedLot ? (
-          /* INSIDE FOLDER -> STRICTLY LIGHTWEIGHT THUMBNAILS (<20KB) */
-          <div className="grid grid-cols-3 gap-2 p-1">
+          /* INSIDE FOLDER -> THUMBNAILS FITTED TO GRID */
+          <div className="grid grid-cols-3 gap-2 p-1 max-w-full">
             {selectedLot.photos.map((photo, index) => {
               const estKB = photo.blobSize ? (photo.blobSize / 1024).toFixed(1) : '<20';
 
@@ -217,14 +235,14 @@ export default function GalleryPage() {
                 <div
                   key={photo._id || photo.id || index}
                   onClick={(e) => handleOpenEditor(photo, e)}
-                  className="relative bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden aspect-square cursor-pointer active:scale-95 transition-transform"
+                  className="relative bg-neutral-900 border border-neutral-800 rounded-xl overflow-hidden aspect-square cursor-pointer active:scale-95 transition-transform max-w-full max-h-full"
                 >
                   {photo.thumbUrl ? (
                     <img
                       src={photo.thumbUrl}
                       alt="Thumbnail"
                       loading="lazy"
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover block"
                     />
                   ) : (
                     <div className="w-full h-full flex items-center justify-center bg-neutral-950 text-neutral-600 text-[10px] font-mono">
@@ -233,13 +251,13 @@ export default function GalleryPage() {
                   )}
 
                   {/* Size Indicator */}
-                  <span className="absolute top-1 left-1 bg-black/80 backdrop-blur-md text-[8px] font-mono px-1.5 py-0.5 rounded text-neutral-300 border border-white/10">
+                  <span className="absolute top-1 left-1 bg-black/80 backdrop-blur-md text-[8px] font-mono px-1.5 py-0.5 rounded text-neutral-300 border border-white/10 pointer-events-none">
                     {estKB} KB
                   </span>
 
                   {/* Queue Tag */}
                   {photo.isLocal && (
-                    <span className="absolute bottom-1 left-1 bg-amber-500 text-black text-[7px] font-mono px-1 py-0.5 rounded font-extrabold">
+                    <span className="absolute bottom-1 left-1 bg-amber-500 text-black text-[7px] font-mono px-1 py-0.5 rounded font-extrabold pointer-events-none">
                       QUEUED
                     </span>
                   )}
@@ -247,7 +265,7 @@ export default function GalleryPage() {
                   {/* Delete Action */}
                   <button
                     onClick={(e) => handleDeletePhoto(photo, e)}
-                    className="absolute top-1 right-1 w-5 h-5 rounded bg-red-600/90 text-white text-[10px] font-bold flex items-center justify-center backdrop-blur-md"
+                    className="absolute top-1 right-1 w-6 h-6 rounded bg-red-600/90 text-white text-[11px] font-bold flex items-center justify-center backdrop-blur-md z-10"
                   >
                     ✕
                   </button>
@@ -283,7 +301,6 @@ export default function GalleryPage() {
                           onClick={() => setSelectedLot({ lotNumber: lotNum, photos: folderPhotos })}
                           className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 flex flex-col justify-between hover:border-neutral-700 active:scale-98 transition-all cursor-pointer"
                         >
-                          {/* Folder Card Graphic (No Image Previews) */}
                           <div className="w-full h-20 bg-neutral-950/80 rounded-lg border border-neutral-800/80 flex flex-col items-center justify-center mb-2 relative">
                             <span className="text-3xl">📁</span>
 
@@ -315,10 +332,9 @@ export default function GalleryPage() {
         )}
       </div>
 
-      {/* FULL PICTURE OVERLAY (STRICTLY FITS WITHIN SCREEN SIZE) */}
+      {/* FULL PICTURE OVERLAY (CONSTRAINED TO SCREEN BOUNDARIES) */}
       {activePhoto && (
         <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-md flex flex-col justify-between p-4 h-screen w-screen overflow-hidden">
-          {/* Header */}
           <div className="flex justify-between items-center pt-2">
             <button
               onClick={() => setActivePhoto(null)}
@@ -337,7 +353,6 @@ export default function GalleryPage() {
             </button>
           </div>
 
-          {/* Full Picture View (Constrained to screen dimensions) */}
           <div className="flex-1 my-2 flex items-center justify-center overflow-hidden relative">
             <img
               src={activePhoto.fullUrl}
@@ -346,11 +361,10 @@ export default function GalleryPage() {
                 filter: `brightness(${brightness}%) contrast(${contrast}%)`,
                 transform: `rotate(${rotation}deg)`
               }}
-              className="max-h-[72vh] max-w-full object-contain rounded-lg transition-transform duration-200"
+              className="max-h-[70vh] max-w-full object-contain rounded-lg transition-transform duration-200"
             />
           </div>
 
-          {/* Control Panel */}
           <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3 space-y-2 mb-1">
             <div className="flex justify-between items-center">
               <span className="text-[11px] font-bold text-neutral-400">Rotate Canvas</span>
